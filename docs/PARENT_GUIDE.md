@@ -31,7 +31,7 @@ Pick how prominent you want your calendar to look under **Calendar Display Style
 1. **Subtle Ticker Only** *(Default)* — Keeps the full live World Map & 3-day forecast visible, rotating calm calendar headlines along the top ticker (`"SCHOOL DAY · SWIMMING LESSON (4 PM)"`).
 2. **Prominent Dock Card** — Keeps the full World Map & ISS visible, while turning the bottom-right dock card into a clean **"TODAY'S PLAN"** card with a live countdown for timed events (`"SWIMMING LESSON IN 25 MIN!"`):
    ![Prominent Calendar Dock Card](media/21_calendar_prominent_dock.png)
-3. **Morning Launchpad Takeover** *(Autism-Friendly School Morning Mode)* — Between **6:45 AM** and **5 minutes past your Leave for School Time**, Band 2 gently switches to a calm, structured morning briefing board (then automatically returns to the live World Map!):
+3. **Morning Launchpad Takeover** *(Autism-Friendly School Morning Mode)* — From **your child's effective Morning Wake-Up Time** until **5 minutes past your Leave for School Time** (automatically skipped on quiet weekends with no scheduled events!), Band 2 gently switches to a calm, structured morning briefing board (then automatically returns to the live World Map!):
    - Top **School Day** (teal) or **No School · Half Term** (warm amber) badge + live **"LEAVE FOR SCHOOL IN 22 MIN"** progress bar
    - **Today's Plan & Routine** (Parent Note, timed events, all-day items like PE Kit, and Tomorrow heads-up)
    - **Weather Prep Checklist** (e.g. *"Warm Raincoat & Umbrella"*, *"Big Coat, Gloves & Scarf"*, *"Sun Hat, Suncream & Water"*)
@@ -48,6 +48,19 @@ What happens when you have a timed event today, an all-day event today, AND mult
   - **`Smart Auto`** *(Recommended)*: Imminent timed events (within 90 min) take #1 priority; otherwise alternates calmly between Today's Routine, Priority `Countdown:` tags, Tomorrow's heads-up (from 3 PM), and automatic School Holiday countdowns.
   - **`Today & Routine First`**: Always leads with today's events & school status; saves countdowns for quiet days.
   - **`Countdowns First`**: Keeps upcoming holidays & trips front-and-center alongside imminent timed events.
+
+### Why Are There Two Calendar URLs? (Family vs. School)
+**Both calendars can display events on the screen** — they are merged automatically (with Family events taking priority if both have events at the same time). The key difference is how **School Holidays / No-School Days** are detected:
+
+| Capability | **Family Calendar URL** | **School Term & Holiday Calendar URL** |
+| :--- | :---: | :---: |
+| Displays normal timed & all-day events (e.g. *Swimming*, *Christmas Dinner Day*, *School Photos*) | **Yes** (priority) | **Yes** (merged automatically!) |
+| Triggers `NO SCHOOL` / Lie-In / Late Bedtime **from plain keywords** (*INSET, Half Term, Holiday, School Closed*) | **No** *(so adult work trips don't cancel school!)* | **Yes** (automatic — no tags needed!) |
+| Triggers `NO SCHOOL` / Lie-In / Late Bedtime **with `[holiday]` or `[no school]` tag** | **Yes** | **Yes** |
+| Enables the `SCHOOL DAY` badge on normal weekdays | Only during active holidays | **Yes** (every weekday) |
+| Auto `"X SLEEPS TO HALF TERM!"` & `"X SLEEPS TO BACK TO SCHOOL"` countdowns | **Yes** (from `[holiday]` / `[no school]` events, merged seamlessly with School INSET days!) | **Yes** |
+
+> **Tip if your school calendar only lists INSET days & school events (and not council term holidays):** Paste your school's HTTPS `.ics` link into **School Term & Holiday Calendar URL**, and add the ~6 term holiday blocks for the year into your **Family Calendar** with **`[holiday]`** in the title (e.g. `October Half Term [holiday]`). The clock automatically merges both feeds — so if Half Term ends Friday and the school feed has a Monday `INSET` day, it counts all the way to Tuesday!
 
 ### Helpful Event Tags You Can Use Right in Apple/Google Calendar
 - **`Countdown:` or `[countdown]`** *(up to 90 days ahead!)* — e.g. `Countdown: Cornwall Holiday` or `Disney Trip [countdown]`. The clock strips the tag cleanly and prioritizes up to 2 concurrent countdowns (`"42 SLEEPS TO CORNWALL HOLIDAY!"`).

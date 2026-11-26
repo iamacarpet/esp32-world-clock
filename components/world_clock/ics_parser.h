@@ -168,6 +168,8 @@ struct IcsFeedSummary {
   int next_school_holiday_days{-1};
   char next_school_holiday_name[36]{""};
   int back_to_school_days{-1};
+  uint64_t hol_mask{0};  // 64-day bitmask (d=0..62) so Family [holiday] + School INSET merge across feeds!
+  int cur_dow_mon0{0};   // 0=Mon..6=Sun for cur_jdn_ (used when recomputing merged back-to-school)
 };
 
 // Priority mode for resolving multiple concurrent calendar events:
@@ -219,46 +221,107 @@ inline CalendarView build_calendar_view(const IcsFeedSummary &fam, const IcsFeed
     v.school_badge = "SCHOOL DAY";
   }
 
-  // Auto school holiday / back-to-school badge
-  if (is_hol && sch.back_to_school_days > 0) {
+  // Auto school holiday / back-to-school badge (merges Family [holiday] + School INSET bitmasks!)
+  uint64_t merged_hol_mask = fam.hol_mask | sch.hol_mask;
+  int merged_bts = sch.back_to_school_days;
+  if (is_hol && merged_hol_mask != 0) {
+    int base_dow = (sch.hol_mask != 0) ? sch.cur_dow_mon0 : fam.cur_dow_mon0;
+    for (int d = 1; d <= 62; d++) {
+      int jdow = (base_dow + d) % 7;
+      bool is_wk = (jdow == 5 || jdow == 6);
+      if (!is_wk && ((merged_hol_mask & (1ULL << d)) == 0)) {
+        merged_bts = d;
+        break;
+      }
+    }
+  } else if (is_hol && merged_bts <= 0 && fam.back_to_school_days > 0) {
+    merged_bts = fam.back_to_school_days;
+  }
+
+  int next_hol_days = -1;
+  const char *next_hol_name = "HOLIDAY";
+  if (sch.next_school_holiday_days > 0 && sch.next_school_holiday_days <= 60) {
+    next_hol_days = sch.next_school_holiday_days;
+    if (sch.next_school_holiday_name[0]) next_hol_name = sch.next_school_holiday_name;
+  }
+  if (fam.next_school_holiday_days > 0 && fam.next_school_holiday_days <= 60 &&
+      (next_hol_days < 0 || fam.next_school_holiday_days < next_hol_days)) {
+    next_hol_days = fam.next_school_holiday_days;
+    if (fam.next_school_holiday_name[0]) next_hol_name = fam.next_school_holiday_name;
+  }
+
+  if (is_hol && merged_bts > 0) {
     char b[48];
-    snprintf(b, sizeof(b), "%d %s TO BACK TO SCHOOL", sch.back_to_school_days,
-             (sch.back_to_school_days == 1) ? "SLEEP" : "SLEEPS");
+    snprintf(b, sizeof(b), "%d %s TO BACK TO SCHOOL", merged_bts, (merged_bts == 1) ? "SLEEP" : "SLEEPS");
     v.holiday_badge = b;
-  } else if (!is_hol && sch.next_school_holiday_days > 0 && sch.next_school_holiday_days <= 60) {
+  } else if (!is_hol && next_hol_days > 0) {
     char b[56];
-    const char *hn = sch.next_school_holiday_name[0] ? sch.next_school_holiday_name : "HOLIDAY";
-    snprintf(b, sizeof(b), "%d %s TO %s!", sch.next_school_holiday_days,
-             (sch.next_school_holiday_days == 1) ? "SLEEP" : "SLEEPS", to_upper_ascii(hn).c_str());
+    snprintf(b, sizeof(b), "%d %s TO %s!", next_hol_days, (next_hol_days == 1) ? "SLEEP" : "SLEEPS",
+             to_upper_ascii(next_hol_name).c_str());
     v.holiday_badge = b;
   }
+
+  // Merge up to 4 timed events today across BOTH Family & School calendars (sorted by start minute, Family wins ties)
+  TimedEvent merged_timed[4]{};
+  int mt_n = 0;
+  auto push_timed = [&](const TimedEvent &ev) {
+    if (!ev.valid || mt_n >= 4) return;
+    int pos = mt_n;
+    while (pos > 0 && ev.minute_of_day < merged_timed[pos - 1].minute_of_day) {
+      merged_timed[pos] = merged_timed[pos - 1];
+      pos--;
+    }
+    merged_timed[pos] = ev;
+    mt_n++;
+  };
+  for (int i = 0; i < 2; i++) push_timed(fam.today_timed[i]);
+  for (int i = 0; i < 2; i++) push_timed(sch.today_timed[i]);
 
   // Pick next upcoming timed event today (automatically expires 30m after start time!)
   std::string active_timed_str;
+  std::string second_timed_str;
   bool imminent_timed = false;
-  for (int i = 0; i < 2; i++) {
-    if (!fam.today_timed[i].valid) continue;
-    int diff = fam.today_timed[i].minute_of_day - now_min;
+  for (int i = 0; i < mt_n; i++) {
+    int diff = merged_timed[i].minute_of_day - now_min;
     if (diff < -30) continue;  // Already finished/passed
-    std::string nm = to_upper_ascii(fam.today_timed[i].title);
+    std::string nm = to_upper_ascii(merged_timed[i].title);
     char tb[64];
-    if (diff >= 0 && diff <= 90) {
-      imminent_timed = true;
-      if (diff <= 5) snprintf(tb, sizeof(tb), "%s NOW!", nm.c_str());
-      else snprintf(tb, sizeof(tb), "%s IN %d MIN!", nm.c_str(), diff);
-    } else {
-      std::string ts = format_short_time(fam.today_timed[i].minute_of_day / 60,
-                                         fam.today_timed[i].minute_of_day % 60, use_24h);
+    if (active_timed_str.empty()) {
+      if (diff >= 0 && diff <= 90) {
+        imminent_timed = true;
+        if (diff <= 5) snprintf(tb, sizeof(tb), "%s NOW!", nm.c_str());
+        else snprintf(tb, sizeof(tb), "%s IN %d MIN!", nm.c_str(), diff);
+      } else {
+        std::string ts = format_short_time(merged_timed[i].minute_of_day / 60,
+                                           merged_timed[i].minute_of_day % 60, use_24h);
+        snprintf(tb, sizeof(tb), "%s (%s)", nm.c_str(), ts.c_str());
+      }
+      active_timed_str = tb;
+    } else if (second_timed_str.empty()) {
+      std::string ts = format_short_time(merged_timed[i].minute_of_day / 60,
+                                         merged_timed[i].minute_of_day % 60, use_24h);
       snprintf(tb, sizeof(tb), "%s (%s)", nm.c_str(), ts.c_str());
+      second_timed_str = tb;
     }
-    active_timed_str = tb;
-    break;
   }
 
-  std::string allday_str = fam.today_allday[0] ? to_upper_ascii(fam.today_allday) : "";
-  std::string tmrw_str = fam.tomorrow_title[0] ? ("TOMORROW \u2192 " + to_upper_ascii(fam.tomorrow_title)) : "";
+  // Merge all-day events across Family + non-holiday School events (e.g. Christmas Dinner Day, School Photos!)
+  std::string fam_allday = fam.today_allday[0] ? to_upper_ascii(fam.today_allday) : "";
+  std::string sch_allday;
+  if (sch.today_allday[0]) {
+    std::string cand = to_upper_ascii(sch.today_allday);
+    // Avoid duplicating the school holiday name already shown in the top NO SCHOOL badge
+    if (!is_hol || cand != to_upper_ascii(hol_note)) {
+      sch_allday = cand;
+    }
+  }
+  std::string allday_str = !fam_allday.empty() ? fam_allday : sch_allday;
+  std::string extra_allday_str = (!fam_allday.empty() && !sch_allday.empty() && sch_allday != fam_allday) ? sch_allday : "";
 
-  // Collect up to 3 concurrent countdowns (custom UI countdown + 2 ICS countdowns + school holiday badge)
+  const char *tmrw_raw = fam.tomorrow_title[0] ? fam.tomorrow_title : sch.tomorrow_title;
+  std::string tmrw_str = tmrw_raw[0] ? ("TOMORROW \u2192 " + to_upper_ascii(tmrw_raw)) : "";
+
+  // Collect up to 3 concurrent countdowns (custom UI + Family/School ICS countdowns + merged school holiday badge)
   std::string cd_pool[3];
   int cd_n = 0;
   if (!custom_cd_name.empty() && custom_cd_days >= 0 && custom_cd_days <= 90) {
@@ -277,21 +340,26 @@ inline CalendarView build_calendar_view(const IcsFeedSummary &fam, const IcsFeed
       cd_pool[cd_n++] = cb;
     }
   }
+  for (int i = 0; i < 2 && cd_n < 3; i++) {
+    if (sch.countdowns[i].valid && sch.countdowns[i].priority && sch.countdowns[i].days_away >= 1) {
+      char cb[56];
+      snprintf(cb, sizeof(cb), "%d %s TO %s!", sch.countdowns[i].days_away,
+               (sch.countdowns[i].days_away == 1) ? "SLEEP" : "SLEEPS",
+               to_upper_ascii(sch.countdowns[i].title).c_str());
+      cd_pool[cd_n++] = cb;
+    }
+  }
   if (cd_n < 3 && !v.holiday_badge.empty()) {
     cd_pool[cd_n++] = v.holiday_badge;
   }
   std::string active_cd = (cd_n > 0) ? cd_pool[rotation_slot % cd_n] : "";
 
-  // Populate Morning Launchpad plan bullets (up to 3 crisp items)
+  // Populate Morning Launchpad plan bullets (up to 3 crisp items across Family + School!)
   int pl = 0;
   if (!active_timed_str.empty() && pl < 3) v.plan_lines[pl++] = active_timed_str;
   if (!allday_str.empty() && pl < 3) v.plan_lines[pl++] = allday_str;
-  if (fam.today_timed[1].valid && fam.today_timed[1].minute_of_day - now_min >= -30 && pl < 3) {
-    std::string ts = format_short_time(fam.today_timed[1].minute_of_day / 60,
-                                       fam.today_timed[1].minute_of_day % 60, use_24h);
-    std::string s2 = to_upper_ascii(fam.today_timed[1].title) + " (" + ts + ")";
-    if (s2 != active_timed_str) v.plan_lines[pl++] = s2;
-  }
+  if (!extra_allday_str.empty() && pl < 3) v.plan_lines[pl++] = extra_allday_str;
+  if (!second_timed_str.empty() && second_timed_str != active_timed_str && pl < 3) v.plan_lines[pl++] = second_timed_str;
   if (!tmrw_str.empty() && pl < 3) v.plan_lines[pl++] = tmrw_str;
   if (!active_cd.empty() && pl < 3) v.plan_lines[pl++] = active_cd;
   if (pl == 0) v.plan_lines[0] = is_hol || is_weekend ? "FREE DAY · NO EVENTS SCHEDULED" : "REGULAR SCHOOL DAY";
@@ -377,6 +445,22 @@ class IcsStreamParser {
         is_school_(is_school_feed),
         local_utc_offset_min_(local_utc_offset_min) {
     cur_jdn_ = ymd_to_jdn(cur_y, cur_m, cur_d);
+    summary_.cur_dow_mon0 = (int)(((cur_jdn_ % 7) + 7) % 7);
+  }
+
+  // Resets all streaming & accumulated summary state cleanly (e.g. before retrying after an HTTP redirect).
+  void reset() {
+    saw_vcalendar_ = false;
+    in_vevent_ = false;
+    has_pending_ = false;
+    raw_len_ = 0;
+    raw_line_[0] = '\0';
+    pending_line_[0] = '\0';
+    hol_mask_ = 0;
+    tomorrow_prio_ = -1;
+    summary_ = IcsFeedSummary{};
+    summary_.cur_dow_mon0 = (int)(((cur_jdn_ % 7) + 7) % 7);
+    reset_event_();
   }
 
   void feed(const char *data, size_t len) {
@@ -408,6 +492,8 @@ class IcsStreamParser {
 
     // Derive continuous school-holiday status & merged Back-to-School countdown from 64-day bitmask
     // (accurately merges adjacent Mon-Fri Half Term + Monday INSET Day regardless of VEVENT order!)
+    summary_.hol_mask = hol_mask_;
+    summary_.cur_dow_mon0 = (int)(((cur_jdn_ % 7) + 7) % 7);
     if ((hol_mask_ & 1ULL) != 0) summary_.today_is_school_holiday = true;
     if ((hol_mask_ & 2ULL) != 0) summary_.tomorrow_is_school_holiday = true;
     if (summary_.today_is_school_holiday) {
@@ -648,6 +734,8 @@ class IcsStreamParser {
     ev_end_is_utc_ = false;
     ev_yearly_ = false;
     ev_weekly_ = false;
+    ev_interval_ = 1;
+    ev_byday_mask_ = 0;
     ev_has_until_ = false;
     ev_cancelled_ = false;
     ev_sy_ = ev_sm_ = ev_sd_ = 0;
@@ -660,6 +748,8 @@ class IcsStreamParser {
 
   void commit_event_() {
     if (!ev_has_start_ || ev_summary_[0] == '\0' || ev_cancelled_) return;
+    // Skip events prefixed with "Cancelled" / "Canceled" in summary text (common on school feeds!)
+    if (strncasecmp(ev_summary_, "cancelled", 9) == 0 || strncasecmp(ev_summary_, "canceled", 8) == 0) return;
     summary_.events_seen++;
 
     int64_t orig_start_jdn = ymd_to_jdn(ev_sy_, ev_sm_, ev_sd_);
@@ -698,12 +788,26 @@ class IcsStreamParser {
       start_jdn = cand;
       end_jdn_incl = cand + span;
     } else if (ev_weekly_) {
-      if (cur_jdn_ > start_jdn + span) {
-        int64_t weeks = (cur_jdn_ - (start_jdn + span) + 6) / 7;
-        start_jdn += weeks * 7;
-        end_jdn_incl = start_jdn + span;
+      int iv = std::clamp(ev_interval_, 1, 52);
+      int orig_dow = (int)(((start_jdn % 7) + 7) % 7);  // 0=Mon..6=Sun
+      uint8_t byday = (ev_byday_mask_ != 0) ? ev_byday_mask_ : (uint8_t)(1U << orig_dow);
+      int64_t week0_mon = start_jdn - orig_dow;
+      int64_t best_cand = -1;
+      // Search active occurrences from (cur_jdn_ - span) forward up to iv*7+7 days for the earliest active/upcoming match
+      int64_t scan_lo = std::max(start_jdn, cur_jdn_ - span);
+      int64_t scan_hi = cur_jdn_ + (int64_t)iv * 7 + 7;
+      for (int64_t cand = scan_lo; cand <= scan_hi; cand++) {
+        if (ev_has_until_ && cand > ev_until_jdn_) break;
+        int cdow = (int)(((cand % 7) + 7) % 7);
+        if ((byday & (1U << cdow)) == 0) continue;
+        int64_t wk_idx = (cand - week0_mon) / 7;
+        if (wk_idx < 0 || (wk_idx % iv) != 0) continue;
+        best_cand = cand;
+        break;
       }
-      if (ev_has_until_ && start_jdn > ev_until_jdn_) return;
+      if (best_cand < 0) return;
+      start_jdn = best_cand;
+      end_jdn_incl = best_cand + span;
     }
 
     bool hits_today = (cur_jdn_ >= start_jdn && cur_jdn_ <= end_jdn_incl);
@@ -815,19 +919,31 @@ class IcsStreamParser {
     } else if (strncmp(line, "RRULE", 5) == 0 && (line[5] == ':' || line[5] == ';')) {
       if (icontains(val, "FREQ=YEARLY")) ev_yearly_ = true;
       else if (icontains(val, "FREQ=WEEKLY")) ev_weekly_ = true;
-      const char *up = nullptr;
       for (const char *p = val; *p; p++) {
         if (strncasecmp(p, "UNTIL=", 6) == 0) {
-          up = p + 6;
-          break;
-        }
-      }
-      if (up != nullptr) {
-        int uy = 0, um = 0, ud = 0, uh = 0, umn = 0;
-        bool uht = false, uutc = false;
-        if (parse_ics_date(up, uy, um, ud, uht, uh, umn, uutc)) {
-          ev_has_until_ = true;
-          ev_until_jdn_ = ymd_to_jdn(uy, um, ud);
+          int uy = 0, um = 0, ud = 0, uh = 0, umn = 0;
+          bool uht = false, uutc = false;
+          if (parse_ics_date(p + 6, uy, um, ud, uht, uh, umn, uutc)) {
+            int64_t uj = ymd_to_jdn(uy, um, ud);
+            if (uht && uutc) apply_utc_offset_(uj, uh, umn);
+            ev_has_until_ = true;
+            ev_until_jdn_ = uj;
+          }
+        } else if (strncasecmp(p, "INTERVAL=", 9) == 0) {
+          int iv = atoi(p + 9);
+          if (iv >= 1 && iv <= 52) ev_interval_ = iv;
+        } else if (strncasecmp(p, "BYDAY=", 6) == 0) {
+          const char *q = p + 6;
+          while (*q && *q != ';') {
+            if (strncasecmp(q, "MO", 2) == 0) { ev_byday_mask_ |= (1U << 0); q += 2; }
+            else if (strncasecmp(q, "TU", 2) == 0) { ev_byday_mask_ |= (1U << 1); q += 2; }
+            else if (strncasecmp(q, "WE", 2) == 0) { ev_byday_mask_ |= (1U << 2); q += 2; }
+            else if (strncasecmp(q, "TH", 2) == 0) { ev_byday_mask_ |= (1U << 3); q += 2; }
+            else if (strncasecmp(q, "FR", 2) == 0) { ev_byday_mask_ |= (1U << 4); q += 2; }
+            else if (strncasecmp(q, "SA", 2) == 0) { ev_byday_mask_ |= (1U << 5); q += 2; }
+            else if (strncasecmp(q, "SU", 2) == 0) { ev_byday_mask_ |= (1U << 6); q += 2; }
+            else q++;
+          }
         }
       }
     }
@@ -855,6 +971,8 @@ class IcsStreamParser {
   bool ev_end_is_utc_{false};
   bool ev_yearly_{false};
   bool ev_weekly_{false};
+  int ev_interval_{1};
+  uint8_t ev_byday_mask_{0};
   bool ev_has_until_{false};
   bool ev_cancelled_{false};
   int ev_sy_{0}, ev_sm_{0}, ev_sd_{0};

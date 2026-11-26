@@ -368,6 +368,13 @@ interval:
             else mode = ${iss_enabled} ? 1 : 0;
           }
           id(sleep_remaining_01) = id(sched_sleep_stars_en) ? rem_stars : -1.0f;
+          static int s_last_sleep_stars = -1;
+          int sleep_stars_now = (id(sleep_remaining_01) >= 0.0f) ? (int)ceilf(id(sleep_remaining_01) * 5.0f) : -1;
+          bool dock_stars_dirty = false;
+          if (sleep_stars_now != s_last_sleep_stars) {
+            s_last_sleep_stars = sleep_stars_now;
+            dock_stars_dirty = true;
+          }
 
           if (id(focus_end_ms) != 0) {
             uint32_t rem_ms = (uint32_t)(id(focus_end_ms) - now_ms);
@@ -378,19 +385,21 @@ interval:
             id(focus_sub) = id(focus_is_break) ? "Stretch & recharge · Back soon!" : "Stay in flow · 5m break next";
             id(focus_rem_01) = (id(focus_total_ms) > 0) ? std::clamp((float)rem_ms / (float)id(focus_total_ms), 0.0f, 1.0f) : 0.5f;
             int stars_now = (int)ceilf(id(focus_rem_01) * 5.0f);
-            if (stars_now != s_last_focus_stars) { s_last_focus_stars = stars_now; id(force_redraw) = true; }
+            if (stars_now != s_last_focus_stars) { s_last_focus_stars = stars_now; dock_stars_dirty = true; }
           } else if (sel == "Focus Study Timer Preview") {
             id(focus_is_break) = false;
             id(focus_title) = "FOCUS STUDY · 24:35 LEFT";
             id(focus_sub) = "Stay in flow · 5m break next";
             id(focus_rem_01) = 0.85f;
-            if (s_last_focus_stars != 99) { s_last_focus_stars = 99; id(force_redraw) = true; }
+            if (s_last_focus_stars != 99) { s_last_focus_stars = 99; dock_stars_dirty = true; }
           } else {
-            if (id(focus_rem_01) >= 0.0f) { id(focus_rem_01) = -1.0f; s_last_focus_stars = -1; id(force_redraw) = true; }
+            if (id(focus_rem_01) >= 0.0f) { id(focus_rem_01) = -1.0f; s_last_focus_stars = -1; dock_stars_dirty = true; }
           }
 
           // Morning Launchpad starts at effective wake-up time and skips quiet weekends with no scheduled event!
-          bool has_today_ev = id(fam_cal_summary).today_timed[0].valid || (id(fam_cal_summary).today_allday[0] != '\0') || !id(parent_note_text).empty();
+          bool has_today_ev = id(fam_cal_summary).today_timed[0].valid || (id(fam_cal_summary).today_allday[0] != '\0') ||
+                              id(sch_cal_summary).today_timed[0].valid || (id(sch_cal_summary).today_allday[0] != '\0') ||
+                              !id(parent_note_text).empty();
           int lp_start_m = id(eff_wakeup_min_today);
           int lp_end_m = id(school_leave_min) + 5;
           bool auto_lp = (id(cal_display_style) == 2) && (slp == 0) && (mode <= 1 || mode == 3) &&
@@ -415,6 +424,9 @@ interval:
           if (changed) {
             id(force_redraw) = false;
             id(applied_palette) = 255;
+          } else if (dock_stars_dirty) {
+            // Instant star transition on dock_canvas without re-rendering the 800x322 world map!
+            id(render_dock).execute();
           }
 
       - if:

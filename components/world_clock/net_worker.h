@@ -113,8 +113,8 @@ class NetWorker {
 
   struct IcsStreamCtx {
     IcsStreamParser *parser{nullptr};
-    size_t total_bytes{0};
-    uint32_t start_ms{0};
+    size_t *total_bytes{nullptr};
+    uint32_t chain_start_ms{0};
     bool aborted{false};
     char redirect_loc[288]{""};
   };
@@ -201,13 +201,15 @@ class NetWorker {
         snprintf(ctx->redirect_loc, sizeof(ctx->redirect_loc), "%s", evt->header_value);
       }
     } else if (evt->event_id == HTTP_EVENT_ON_DATA && evt->data_len > 0) {
-      ctx->total_bytes += (size_t)evt->data_len;
-      uint32_t elapsed = (uint32_t)(esphome::millis() - ctx->start_ms);
-      if (ctx->total_bytes > kMaxIcsBytes || elapsed > kMaxIcsWallMs) {
+      if (ctx->total_bytes != nullptr) *ctx->total_bytes += (size_t)evt->data_len;
+      uint32_t elapsed = (uint32_t)(esphome::millis() - ctx->chain_start_ms);
+      if ((ctx->total_bytes != nullptr && *ctx->total_bytes > kMaxIcsBytes) || elapsed > kMaxIcsWallMs) {
         ctx->aborted = true;
         return ESP_FAIL;
       }
-      if (ctx->parser != nullptr) {
+      // Only feed HTTP 2xx bodies into the ICS parser (never pollute parser with 301/302 HTML redirect pages!)
+      int st = esp_http_client_get_status_code(evt->client);
+      if (st >= 200 && st < 300 && ctx->parser != nullptr) {
         ctx->parser->feed((const char *)evt->data, (size_t)evt->data_len);
       }
     }
@@ -251,27 +253,46 @@ class NetWorker {
       return snprintf(out, cap, "https:%s", loc) < (int)cap;
     }
     if (loc[0] == '/') {
-      // Relative path on same origin (keep https://<authority>)
+      // Root-relative path on same origin (keep https://<authority>)
       const char *slash = strchr(cur_url + 8, '/');
       size_t origin_len = (slash != nullptr) ? (size_t)(slash - cur_url) : strlen(cur_url);
       if (origin_len + strlen(loc) + 1 >= cap) return false;
       snprintf(out, cap, "%.*s%s", (int)origin_len, cur_url, loc);
       return true;
     }
-    return false;  // Reject http:// downgrades and unusual schemes!
+    // Reject any scheme prefix like http:, javascript:, data: (colon before first slash)
+    for (const char *p = loc; *p && *p != '/' && *p != '?' && *p != '#'; p++) {
+      if (*p == ':') return false;
+    }
+    // Directory-relative path (e.g. Location: calendar.ics) resolved against last '/' after https://host/
+    const char *path_start = strchr(cur_url + 8, '/');
+    if (path_start == nullptr) {
+      return snprintf(out, cap, "%s/%s", cur_url, loc) < (int)cap;
+    }
+    const char *last_slash = strrchr(path_start, '/');
+    size_t dir_len = (size_t)(last_slash - cur_url) + 1;
+    if (dir_len + strlen(loc) + 1 >= cap) return false;
+    snprintf(out, cap, "%.*s%s", (int)dir_len, cur_url, loc);
+    return true;
   }
 
   // Streams iCloud / Google / School .ics feeds straight into IcsStreamParser (< 2 KB RAM)
-  // with strict HTTPS, CA bundle, manual redirect validation (anti-downgrade & anti-SSRF), byte & time caps!
+  // with strict HTTPS, CA bundle, manual redirect validation (anti-downgrade & anti-SSRF), full-chain byte & time caps!
   static bool fetch_ics_stream(const char *raw_url, IcsStreamParser &parser, char *norm_url, size_t norm_cap) {
     if (!normalize_calendar_url(raw_url, norm_url, norm_cap)) return false;
 
+    uint32_t chain_start_ms = esphome::millis();
+    size_t chain_total_bytes = 0;
+
     for (int hop = 0; hop <= 3; hop++) {
+      if ((uint32_t)(esphome::millis() - chain_start_ms) > kMaxIcsWallMs) return false;
       if (!verify_public_dns(norm_url)) return false;
+      parser.reset();
 
       IcsStreamCtx ctx;
       ctx.parser = &parser;
-      ctx.start_ms = esphome::millis();
+      ctx.total_bytes = &chain_total_bytes;
+      ctx.chain_start_ms = chain_start_ms;
 
       esp_http_client_config_t cfg = {};
       cfg.url = norm_url;

@@ -326,15 +326,28 @@ interval:
               t_cal.loc_day = now.day_of_month;
             }
             if (t_cal.cal_dirty) {
-              id(fam_cal_summary) = t_cal.family_cal;
-              id(sch_cal_summary) = t_cal.school_cal;
-              id(cal_today_event) = t_cal.family_cal.today_title;
-              id(cal_tomorrow_event) = t_cal.family_cal.tomorrow_title;
-              id(cal_next_event) = t_cal.family_cal.next_title;
-              id(cal_next_days) = t_cal.family_cal.next_days_away;
-              id(cal_school_configured) = (t_cal.school_cal_url[0] != '\0') || t_cal.family_cal.today_is_school_holiday;
-              id(cal_school_holiday) = t_cal.school_cal.today_is_school_holiday || t_cal.family_cal.today_is_school_holiday;
-              id(cal_school_note) = (t_cal.school_cal.school_note[0] != '\0') ? t_cal.school_cal.school_note : t_cal.family_cal.school_note;
+              // Guard each feed independently so hybrid HA calendar sensors + single .ics URL never clobber each other!
+              static bool s_had_fam_url = false;
+              static bool s_had_sch_url = false;
+              bool has_fam_url = (t_cal.family_cal_url[0] != '\0');
+              bool has_sch_url = (t_cal.school_cal_url[0] != '\0');
+              if (has_fam_url || s_had_fam_url) {
+                id(fam_cal_summary) = has_fam_url ? t_cal.family_cal : world_clock::IcsFeedSummary{};
+                id(cal_today_event) = id(fam_cal_summary).today_title;
+                id(cal_tomorrow_event) = id(fam_cal_summary).tomorrow_title;
+                id(cal_next_event) = id(fam_cal_summary).next_title;
+                id(cal_next_days) = id(fam_cal_summary).next_days_away;
+              }
+              if (has_sch_url || s_had_sch_url) {
+                id(sch_cal_summary) = has_sch_url ? t_cal.school_cal : world_clock::IcsFeedSummary{};
+              }
+              s_had_fam_url = has_fam_url;
+              s_had_sch_url = has_sch_url;
+              if (has_sch_url || id(fam_cal_summary).today_is_school_holiday || id(sch_cal_summary).today_is_school_holiday) {
+                id(cal_school_configured) = true;
+              }
+              id(cal_school_holiday) = id(sch_cal_summary).today_is_school_holiday || id(fam_cal_summary).today_is_school_holiday;
+              id(cal_school_note) = (id(sch_cal_summary).school_note[0] != '\0') ? id(sch_cal_summary).school_note : id(fam_cal_summary).school_note;
               t_cal.cal_dirty = false;
               id(force_redraw) = true;
             }

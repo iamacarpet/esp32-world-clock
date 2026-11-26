@@ -408,6 +408,115 @@ int main() {
   // Accented UTF-8 uppercasing
   assert(to_upper_ascii("Caf\xC3\xA9") == "CAF\xC3\x89");
 
+  // 12. v1.2.1 Polish Regressions: R-01 reset() after redirect HTML, R-03 WEEKLY INTERVAL & BYDAY + UTC UNTIL,
+  //     and Dual-Calendar Merge (School non-holiday events + "Cancelled!" skip + Family [holiday] + School INSET merge!)
+  {
+    // R-01: Garbage redirect HTML without newline before reset() must NOT corrupt subsequent valid ICS!
+    IcsStreamParser redir(2026, 12, 11, true);
+    const char *html_302 = "<html><body>Moved Permanently</body></html>";
+    redir.feed(html_302, strlen(html_302));
+    redir.reset();
+    const char *school_ics =
+        "BEGIN:VCALENDAR\r\n"
+        "BEGIN:VEVENT\r\n"
+        "DTSTART;TZID=Europe/London;VALUE=DATE:20261211\r\n"
+        "DTEND;TZID=Europe/London;VALUE=DATE:20261212\r\n"
+        "SUMMARY;LANGUAGE=en-gb:Christmas Dinner Day\r\n"
+        "END:VEVENT\r\n"
+        "BEGIN:VEVENT\r\n"
+        "DTSTART;TZID=Europe/London:20261211T090000\r\n"
+        "SUMMARY;LANGUAGE=en-gb:Cancelled! - Car Boot Sale\r\n"
+        "END:VEVENT\r\n"
+        "END:VCALENDAR\r\n";
+    redir.feed(school_ics, strlen(school_ics));
+    redir.finish();
+    assert(redir.summary().valid);
+    assert(!redir.summary().today_is_school_holiday);
+    assert(std::string(redir.summary().today_allday) == "Christmas Dinner Day");
+    assert(!redir.summary().today_timed[0].valid);  // "Cancelled! - Car Boot Sale" skipped!
+
+    // Dual-calendar build_calendar_view surfaces School non-holiday event when Family feed is empty!
+    auto cv_sch = build_calendar_view(IcsFeedSummary{}, redir.summary(), true, false, 8 * 60, 0, 0, false, "", -1);
+    assert(cv_sch.headline.find("CHRISTMAS DINNER DAY") != std::string::npos);
+    assert(cv_sch.plan_lines[0] == "CHRISTMAS DINNER DAY");
+  }
+
+  {
+    // Cross-feed holiday bitmask merge: Family Calendar has Mon-Fri Half Term [holiday] (Oct 26..30),
+    // School Calendar has adjacent Monday INSET (Nov 2) -> on Wed Oct 28, merged Back-to-School = 6 sleeps (Tue Nov 3)!
+    const char *fam_hol =
+        "BEGIN:VCALENDAR\r\n"
+        "BEGIN:VEVENT\r\n"
+        "DTSTART;VALUE=DATE:20261026\r\n"
+        "DTEND;VALUE=DATE:20261031\r\n"
+        "SUMMARY:Autumn Half Term [holiday]\r\n"
+        "END:VEVENT\r\n"
+        "END:VCALENDAR\r\n";
+    const char *sch_inset =
+        "BEGIN:VCALENDAR\r\n"
+        "BEGIN:VEVENT\r\n"
+        "DTSTART;VALUE=DATE:20261102\r\n"
+        "DTEND;VALUE=DATE:20261103\r\n"
+        "SUMMARY:INSET\r\n"
+        "END:VEVENT\r\n"
+        "END:VCALENDAR\r\n";
+    IcsStreamParser pf(2026, 10, 28, false);
+    pf.feed(fam_hol, strlen(fam_hol));
+    pf.finish();
+    IcsStreamParser ps(2026, 10, 28, true);
+    ps.feed(sch_inset, strlen(sch_inset));
+    ps.finish();
+    auto cv_m = build_calendar_view(pf.summary(), ps.summary(), true, false, 9 * 60, 0, 0, false, "", -1);
+    assert(cv_m.school_badge.find("NO SCHOOL") != std::string::npos);
+    assert(cv_m.holiday_badge == "6 SLEEPS TO BACK TO SCHOOL");
+  }
+
+  {
+    // R-03: FREQ=WEEKLY;INTERVAL=2 (fortnightly Mon starting Oct 5 -> hits Oct 19, skips Oct 12!)
+    //       + FREQ=WEEKLY;BYDAY=MO,WE,FR (starting Mon Oct 5 -> hits Wed Oct 14!)
+    //       + UTC UNTIL=20261020T010000Z in US EDT (-240m) -> Oct 19 21:00 local, so Oct 19 hits & Oct 20 does NOT!
+    const char *rec_ics =
+        "BEGIN:VCALENDAR\r\n"
+        "BEGIN:VEVENT\r\n"
+        "DTSTART:20261005T160000\r\n"
+        "RRULE:FREQ=WEEKLY;INTERVAL=2;UNTIL=20261020T010000Z\r\n"
+        "SUMMARY:Fortnightly Piano\r\n"
+        "END:VEVENT\r\n"
+        "BEGIN:VEVENT\r\n"
+        "DTSTART:20261005T153000\r\n"
+        "RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR\r\n"
+        "SUMMARY:Swim Squad\r\n"
+        "END:VEVENT\r\n"
+        "END:VCALENDAR\r\n";
+
+    // Week 1 Monday (Oct 12): Fortnightly Piano MUST NOT fire; Swim Squad (MO) MUST fire!
+    IcsStreamParser w1_mon(2026, 10, 12, false, -240);
+    w1_mon.feed(rec_ics, strlen(rec_ics));
+    w1_mon.finish();
+    assert(w1_mon.summary().today_timed[0].valid && std::string(w1_mon.summary().today_timed[0].title) == "Swim Squad");
+    assert(!w1_mon.summary().today_timed[1].valid);
+
+    // Week 1 Wednesday (Oct 14): Swim Squad (WE) MUST fire!
+    IcsStreamParser w1_wed(2026, 10, 14, false, -240);
+    w1_wed.feed(rec_ics, strlen(rec_ics));
+    w1_wed.finish();
+    assert(w1_wed.summary().today_timed[0].valid && std::string(w1_wed.summary().today_timed[0].title) == "Swim Squad");
+
+    // Week 2 Monday (Oct 19): BOTH Swim Squad (15:30) AND Fortnightly Piano (16:00, on UNTIL local day Oct 19!) fire!
+    IcsStreamParser w2_mon(2026, 10, 19, false, -240);
+    w2_mon.feed(rec_ics, strlen(rec_ics));
+    w2_mon.finish();
+    assert(w2_mon.summary().today_timed[0].valid && std::string(w2_mon.summary().today_timed[0].title) == "Swim Squad");
+    assert(w2_mon.summary().today_timed[1].valid && std::string(w2_mon.summary().today_timed[1].title) == "Fortnightly Piano");
+
+    // Week 4 Monday (Nov 2): Past UNTIL -> Fortnightly Piano expired; Swim Squad still active!
+    IcsStreamParser w4_mon(2026, 11, 2, false, -240);
+    w4_mon.feed(rec_ics, strlen(rec_ics));
+    w4_mon.finish();
+    assert(w4_mon.summary().today_timed[0].valid && std::string(w4_mon.summary().today_timed[0].title) == "Swim Squad");
+    assert(!w4_mon.summary().today_timed[1].valid);
+  }
+
   printf("ALL CLOCK_MATH & ICS_PARSER UNIT TESTS PASSED!\n");
   return 0;
 }
