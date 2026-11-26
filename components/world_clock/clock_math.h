@@ -21,12 +21,14 @@ struct ScheduleConfig {
   bool sleep_enabled{true};
   bool quiet_enabled{true};
   bool weekend_liein_enabled{false};
-  int winddown_m{19 * 60};       // 19:00
-  int bedtime_m{19 * 60 + 30};   // 19:30
-  int quiet_m{5 * 60};           // 05:00
-  int wakeup_m{6 * 60 + 30};     // 06:30
-  int special_delay_m{0};        // Optional bedtime shift on Xmas Eve / NYE / Bonfire Night
-  int weekend_offset_m{0};       // Optional lie-in shift (0..90 min) on Sat/Sun & School Holidays
+  bool non_school_bedtime_enabled{false};
+  int winddown_m{19 * 60};         // 19:00
+  int bedtime_m{19 * 60 + 30};     // 19:30
+  int quiet_m{5 * 60};             // 05:00
+  int wakeup_m{6 * 60 + 30};       // 06:30
+  int special_delay_m{0};          // Optional bedtime shift on Xmas Eve / NYE / Bonfire Night
+  int weekend_offset_m{0};         // Optional morning lie-in shift (0..90 min) when TODAY is non-school
+  int non_school_bedtime_m{0};     // Optional evening late-bedtime shift (0..90 min) when TOMORROW is non-school
 };
 
 // Exact Gregorian calendar -> Julian Day Number (valid for all Gregorian dates).
@@ -66,26 +68,44 @@ inline int circular_minutes_between(int start_m, int end_m) {
   return diff;
 }
 
-inline int effective_quiet_m(const ScheduleConfig &cfg, bool is_lie_in_day) {
-  int shift = (is_lie_in_day && cfg.weekend_liein_enabled) ? std::clamp(cfg.weekend_offset_m, 0, 120) : 0;
+inline int effective_winddown_m(const ScheduleConfig &cfg, bool is_special_night,
+                                bool is_tomorrow_non_school = false) {
+  int delay = is_special_night ? std::clamp(cfg.special_delay_m, 0, 180) : 0;
+  int eve = (is_tomorrow_non_school && cfg.non_school_bedtime_enabled)
+                ? std::clamp(cfg.non_school_bedtime_m, 0, 120)
+                : 0;
+  return (cfg.winddown_m + std::max(delay, eve)) % 1440;
+}
+
+inline int effective_bedtime_m(const ScheduleConfig &cfg, bool is_special_night,
+                               bool is_tomorrow_non_school = false) {
+  int delay = is_special_night ? std::clamp(cfg.special_delay_m, 0, 180) : 0;
+  int eve = (is_tomorrow_non_school && cfg.non_school_bedtime_enabled)
+                ? std::clamp(cfg.non_school_bedtime_m, 0, 120)
+                : 0;
+  return (cfg.bedtime_m + std::max(delay, eve)) % 1440;
+}
+
+inline int effective_quiet_m(const ScheduleConfig &cfg, bool is_today_non_school) {
+  int shift = (is_today_non_school && cfg.weekend_liein_enabled) ? std::clamp(cfg.weekend_offset_m, 0, 120) : 0;
   return (cfg.quiet_m + shift) % 1440;
 }
 
-inline int effective_wakeup_m(const ScheduleConfig &cfg, bool is_lie_in_day) {
-  int shift = (is_lie_in_day && cfg.weekend_liein_enabled) ? std::clamp(cfg.weekend_offset_m, 0, 120) : 0;
+inline int effective_wakeup_m(const ScheduleConfig &cfg, bool is_today_non_school) {
+  int shift = (is_today_non_school && cfg.weekend_liein_enabled) ? std::clamp(cfg.weekend_offset_m, 0, 120) : 0;
   return (cfg.wakeup_m + shift) % 1440;
 }
 
-// Evaluates the 4-phase circadian schedule, gracefully handling midnight wrap,
-// disabled individual phases, optional special-night delay, and weekend/holiday lie-in.
+// Evaluates the 4-phase circadian schedule, gracefully handling midnight wrap, disabled phases,
+// special-night delay, morning lie-in (when TODAY is non-school), and late evening bedtime
+// (when TOMORROW is non-school — e.g. Fri/Sat/pre-holiday late, Sunday night early for Monday school!).
 inline uint8_t evaluate_schedule(int now_m, const ScheduleConfig &cfg, bool is_special_night,
-                                 bool is_lie_in_day = false) {
+                                 bool is_today_non_school = false, bool is_tomorrow_non_school = false) {
   now_m = ((now_m % 1440) + 1440) % 1440;
-  int delay = is_special_night ? std::clamp(cfg.special_delay_m, 0, 180) : 0;
-  int wd_start = (cfg.winddown_m + delay) % 1440;
-  int bed_start = (cfg.bedtime_m + delay) % 1440;
-  int quiet_start = effective_quiet_m(cfg, is_lie_in_day);
-  int wake_end = effective_wakeup_m(cfg, is_lie_in_day);
+  int wd_start = effective_winddown_m(cfg, is_special_night, is_tomorrow_non_school);
+  int bed_start = effective_bedtime_m(cfg, is_special_night, is_tomorrow_non_school);
+  int quiet_start = effective_quiet_m(cfg, is_today_non_school);
+  int wake_end = effective_wakeup_m(cfg, is_today_non_school);
 
   if (cfg.winddown_enabled && is_in_circular_range(now_m, wd_start, bed_start)) {
     return 3;  // Evening Wind-Down (Amber)
@@ -108,17 +128,17 @@ inline uint8_t evaluate_schedule(int now_m, const ScheduleConfig &cfg, bool is_s
 // Computes remaining fraction (0.0 .. 1.0) in the active Sleep (1) or Wind-Down (3) phase
 // so 1..5 glowing countdown stars gently fade out as bedtime or morning approaches!
 inline float sleep_phase_remaining_01(int now_m, uint8_t phase, const ScheduleConfig &cfg,
-                                      bool is_special_night, bool is_lie_in_day = false) {
+                                      bool is_special_night, bool is_today_non_school = false,
+                                      bool is_tomorrow_non_school = false) {
   now_m = ((now_m % 1440) + 1440) % 1440;
-  int delay = is_special_night ? std::clamp(cfg.special_delay_m, 0, 180) : 0;
   int start_m = 0;
   int end_m = 0;
   if (phase == 3) {
-    start_m = (cfg.winddown_m + delay) % 1440;
-    end_m = (cfg.bedtime_m + delay) % 1440;
+    start_m = effective_winddown_m(cfg, is_special_night, is_tomorrow_non_school);
+    end_m = effective_bedtime_m(cfg, is_special_night, is_tomorrow_non_school);
   } else if (phase == 1) {
-    start_m = (cfg.bedtime_m + delay) % 1440;
-    end_m = cfg.quiet_enabled ? effective_quiet_m(cfg, is_lie_in_day) : effective_wakeup_m(cfg, is_lie_in_day);
+    start_m = effective_bedtime_m(cfg, is_special_night, is_tomorrow_non_school);
+    end_m = cfg.quiet_enabled ? effective_quiet_m(cfg, is_today_non_school) : effective_wakeup_m(cfg, is_today_non_school);
   } else {
     return 0.0f;
   }

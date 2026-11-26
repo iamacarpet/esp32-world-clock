@@ -174,6 +174,72 @@ int main() {
   sch_end.finish();
   assert(!sch_end.summary().today_is_school_holiday);
 
+  // 7. v1.1 Symmetric School-Night vs Non-School-Night Bedtime (18:30/19:30/04:00/06:00 schedule)
+  ScheduleConfig sym;
+  sym.winddown_enabled = true;
+  sym.sleep_enabled = true;
+  sym.quiet_enabled = true;
+  sym.weekend_liein_enabled = true;
+  sym.non_school_bedtime_enabled = true;
+  sym.winddown_m = 18 * 60 + 30;  // 18:30
+  sym.bedtime_m = 19 * 60 + 30;   // 19:30
+  sym.quiet_m = 4 * 60;           // 04:00
+  sym.wakeup_m = 6 * 60;          // 06:00
+  sym.weekend_offset_m = 60;      // +60m morning lie-in -> 05:00 quiet / 07:00 wake
+  sym.non_school_bedtime_m = 30;  // +30m late bedtime -> 19:00 wind-down / 20:00 bed
+
+  // Friday night (today=school day, tomorrow=Sat non-school): late bedtime applies!
+  assert(evaluate_schedule(18 * 60 + 45, sym, false, false, true) == 0);  // Still Day at 18:45
+  assert(evaluate_schedule(19 * 60 + 15, sym, false, false, true) == 3);  // Wind-down 19:00..20:00
+  assert(evaluate_schedule(20 * 60, sym, false, false, true) == 1);       // Bedtime 20:00
+
+  // Sunday (today=Sun non-school, tomorrow=Mon school day): morning lie-in AND early school-night bedtime!
+  assert(evaluate_schedule(6 * 60 + 30, sym, false, true, false) == 2);   // Sunday morning lie-in (still Quiet Play!)
+  assert(evaluate_schedule(18 * 60 + 45, sym, false, true, false) == 3);  // Sunday evening: early 18:30 wind-down!
+  assert(evaluate_schedule(19 * 60 + 30, sym, false, true, false) == 1);  // Sunday evening: early 19:30 bedtime!
+
+  // Sunday before Monday Inset Day (today=Sun, tomorrow=Mon holiday): BOTH morning lie-in AND late bedtime!
+  assert(evaluate_schedule(18 * 60 + 45, sym, false, true, true) == 0);   // Still Day on Sunday before Inset Day!
+  assert(evaluate_schedule(19 * 60 + 45, sym, false, true, true) == 3);   // Wind-down at 19:45!
+
+  // 8. v1.1 Multi-Event Priority Engine + Auto School Holiday & Back-to-School Countdowns
+  // Before Half Term (Oct 18, 8 days before Oct 26 Half Term; Oct 25 is eve of Half Term!)
+  IcsStreamParser sch_pre(2026, 10, 18, true);
+  sch_pre.feed(kSchoolIcs, strlen(kSchoolIcs));
+  sch_pre.finish();
+  assert(!sch_pre.summary().today_is_school_holiday);
+  assert(!sch_pre.summary().tomorrow_is_school_holiday);
+  assert(sch_pre.summary().next_school_holiday_days == 8);
+
+  IcsStreamParser sch_eve(2026, 10, 25, true);
+  sch_eve.feed(kSchoolIcs, strlen(kSchoolIcs));
+  sch_eve.finish();
+  assert(!sch_eve.summary().today_is_school_holiday);
+  assert(sch_eve.summary().tomorrow_is_school_holiday);  // Sunday before Half Term -> late bedtime!
+
+  // During Half Term (Wed Oct 28): skips Sat Oct 31 & Sun Nov 1 -> 5 sleeps until Mon Nov 2 back to school!
+  assert(sch_hit.summary().back_to_school_days == 5);
+  auto cv_hol = build_calendar_view(IcsFeedSummary{}, sch_hit.summary(), true, false, 9 * 60, 0, 0, false, "", -1);
+  assert(cv_hol.school_badge.find("NO SCHOOL") != std::string::npos);
+  assert(cv_hol.holiday_badge == "5 SLEEPS TO BACK TO SCHOOL");
+
+  // Multi-event priority & timed-event countdown + 30m auto-expiry
+  auto cv_imminent = build_calendar_view(fam.summary(), sch_pre.summary(), true, false, 15 * 60 + 30, 0, 0, false, "", -1);
+  assert(cv_imminent.headline.find("SWIMMING LESSON IN 30 MIN!") != std::string::npos);
+  assert(cv_imminent.holiday_badge.find("8 SLEEPS TO") != std::string::npos);
+
+  // Countdowns First (mode 2) highlights the priority Disney Holiday countdown when timed event isn't imminent
+  auto cv_cd = build_calendar_view(fam.summary(), sch_pre.summary(), true, false, 10 * 60, 2, 0, false, "", -1);
+  assert(cv_cd.headline.find("59 SLEEPS TO DISNEY HOLIDAY") != std::string::npos);
+
+  // After 16:35 (>30m past 16:00 Swimming), timed event auto-expires and does not clutter headline!
+  auto cv_after = build_calendar_view(fam.summary(), sch_pre.summary(), true, false, 16 * 60 + 35, 1, 0, false, "", -1);
+  assert(cv_after.headline.find("SWIMMING") == std::string::npos);
+
+  // Weather prep hint check
+  assert(weather_prep_hint("rainy", 9.0f, false) == "Warm Raincoat & Umbrella");
+  assert(weather_prep_hint("sunny", 24.0f, false) == "Sun Hat, Suncream & Water");
+
   printf("ALL CLOCK_MATH & ICS_PARSER UNIT TESTS PASSED!\n");
   return 0;
 }

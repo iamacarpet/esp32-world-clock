@@ -79,6 +79,23 @@ globals:
   - { id: cal_school_holiday, type: bool, restore_value: no, initial_value: 'false' }
   - { id: cal_school_note, type: std::string, restore_value: no, initial_value: '""' }
   - { id: cal_school_configured, type: bool, restore_value: no, initial_value: 'false' }
+  # Rich v1.1 Calendar, Morning Launchpad & Focus Pomodoro State
+  - { id: fam_cal_summary, type: 'world_clock::IcsFeedSummary', restore_value: no }
+  - { id: sch_cal_summary, type: 'world_clock::IcsFeedSummary', restore_value: no }
+  - { id: cal_priority_mode, type: int, restore_value: no, initial_value: '0' }
+  - { id: cal_display_style, type: int, restore_value: no, initial_value: '0' }
+  - { id: school_leave_min, type: int, restore_value: no, initial_value: '510' }
+  - { id: cal_prominent_active, type: bool, restore_value: no, initial_value: 'false' }
+  - { id: cal_prominent_title, type: std::string, restore_value: no, initial_value: '""' }
+  - { id: cal_prominent_sub, type: std::string, restore_value: no, initial_value: '""' }
+  - { id: launchpad_visible, type: bool, restore_value: no, initial_value: 'false' }
+  - { id: focus_end_ms, type: uint32_t, restore_value: no, initial_value: '0' }
+  - { id: focus_total_ms, type: uint32_t, restore_value: no, initial_value: '0' }
+  - { id: focus_is_break, type: bool, restore_value: no, initial_value: 'false' }
+  - { id: focus_rem_01, type: float, restore_value: no, initial_value: '-1.0' }
+  - { id: focus_title, type: std::string, restore_value: no, initial_value: '""' }
+  - { id: focus_sub, type: std::string, restore_value: no, initial_value: '""' }
+  - { id: minimal_teen_mode, type: bool, restore_value: no, initial_value: 'false' }
 
 select:
   - platform: template
@@ -102,6 +119,9 @@ select:
       - "Easter Egg Hunt"
       - "Fireworks"
       - "Star Wars Day"
+      - "Morning Launchpad Preview"
+      - "No-School Holiday Preview"
+      - "Focus Study Timer Preview"
     on_value:
       then:
         - lambda: |-
@@ -235,11 +255,159 @@ script:
       - script.execute: render_world_map
       - script.execute: render_dock
 
+  - id: update_launchpad_ui
+    mode: single
+    then:
+      - lambda: |-
+          if (!id(launchpad_visible)) {
+            lv_obj_add_flag(id(launchpad_overlay), LV_OBJ_FLAG_HIDDEN);
+            return;
+          }
+          lv_obj_add_flag(id(tracker_badge), LV_OBJ_FLAG_HIDDEN);
+          #if LVGL_VERSION_MAJOR >= 9
+            lv_obj_remove_flag(id(launchpad_overlay), LV_OBJ_FLAG_HIDDEN);
+          #else
+            lv_obj_clear_flag(id(launchpad_overlay), LV_OBJ_FLAG_HIDDEN);
+          #endif
+
+          auto now = id(clock_time).now();
+          std::string sel = id(occasion_select).current_option();
+          bool preview_school = (sel == "Morning Launchpad Preview");
+          bool preview_hol = (sel == "No-School Holiday Preview");
+          int now_m = now.is_valid() ? (now.hour * 60 + now.minute) : 488;
+          int dow = now.is_valid() ? world_clock::ymd_dow_num(now.year, now.month, now.day_of_month) : 1;
+          bool is_wknd = preview_school ? false : (dow == 0 || dow == 6);
+          bool is_hol = preview_hol ? true : (preview_school ? false : (id(cal_school_holiday) || id(fam_cal_summary).today_is_school_holiday || id(sch_cal_summary).today_is_school_holiday));
+          bool is_non_school = is_wknd || is_hol;
+
+          world_clock::IcsFeedSummary fam_use = id(fam_cal_summary);
+          world_clock::IcsFeedSummary sch_use = id(sch_cal_summary);
+          if (preview_school && !fam_use.valid && !sch_use.valid) {
+            now_m = id(school_leave_min) - 22;
+            snprintf(fam_use.today_allday, sizeof(fam_use.today_allday), "PE Kit & Reading Book");
+            fam_use.today_timed[0].valid = true;
+            fam_use.today_timed[0].minute_of_day = 16 * 60;
+            snprintf(fam_use.today_timed[0].title, sizeof(fam_use.today_timed[0].title), "Swimming Lesson");
+            snprintf(fam_use.tomorrow_title, sizeof(fam_use.tomorrow_title), "Non-Uniform Day");
+            sch_use.next_school_holiday_days = 8;
+            snprintf(sch_use.next_school_holiday_name, sizeof(sch_use.next_school_holiday_name), "Half Term");
+          } else if (preview_hol && !sch_use.today_is_school_holiday) {
+            sch_use.today_is_school_holiday = true;
+            snprintf(sch_use.school_note, sizeof(sch_use.school_note), "Half Term");
+            sch_use.back_to_school_days = 3;
+            if (!fam_use.valid) {
+              fam_use.today_timed[0].valid = true;
+              fam_use.today_timed[0].minute_of_day = 10 * 60 + 30;
+              snprintf(fam_use.today_timed[0].title, sizeof(fam_use.today_timed[0].title), "Science Museum Trip");
+              snprintf(fam_use.tomorrow_title, sizeof(fam_use.tomorrow_title), "Grandma Visiting");
+            }
+          }
+
+          auto cv = world_clock::build_calendar_view(
+              fam_use, sch_use,
+              id(cal_school_configured) || is_hol || preview_school || preview_hol, is_wknd, now_m,
+              id(cal_priority_mode), (now.is_valid() ? now.second / 12 : 0),
+              id(use_24h_clock), "", -1);
+
+          // 1. Top School Status Pill & Leave-for-School Countdown Bar
+          std::string badge = cv.school_badge.empty() ? (is_non_school ? "NO SCHOOL DAY" : "SCHOOL DAY") : cv.school_badge;
+          lv_label_set_text(id(lp_school_lbl), badge.c_str());
+          if (is_non_school) {
+            lv_obj_set_style_bg_color(id(lp_school_pill), lv_color_hex(0x2E1A04), 0);
+            lv_obj_set_style_border_color(id(lp_school_pill), lv_color_hex(0xF59E0B), 0);
+            lv_obj_set_style_text_color(id(lp_school_lbl), lv_color_hex(0xFCD34D), 0);
+            lv_obj_set_style_bg_color(id(lp_countdown_bar), lv_color_hex(0xF59E0B), LV_PART_INDICATOR);
+            lv_label_set_text(id(lp_countdown_lbl), "NO SCHOOL TODAY · ENJOY YOUR DAY!");
+            lv_bar_set_value(id(lp_countdown_bar), 100, LV_ANIM_OFF);
+          } else {
+            lv_obj_set_style_bg_color(id(lp_school_pill), lv_color_hex(0x0B3B3A), 0);
+            lv_obj_set_style_border_color(id(lp_school_pill), lv_color_hex(0x14B8A6), 0);
+            lv_obj_set_style_text_color(id(lp_school_lbl), lv_color_hex(0x5EEAD4), 0);
+            int leave_m = id(school_leave_min);
+            int rem_m = leave_m - now_m;
+            char cdl[56];
+            int pct = 100;
+            uint32_t bar_col = 0x14B8A6;
+            if (rem_m > 0) {
+              snprintf(cdl, sizeof(cdl), "LEAVE FOR SCHOOL IN %d MIN", rem_m);
+              pct = std::clamp((int)((90 - rem_m) * 100 / 90), 5, 98);
+              if (rem_m <= 10) bar_col = 0xF59E0B;
+            } else if (rem_m >= -10) {
+              snprintf(cdl, sizeof(cdl), "TIME TO LEAVE FOR SCHOOL!");
+              pct = 100;
+              bar_col = 0xEF4444;
+            } else {
+              std::string lt = world_clock::format_short_time(leave_m / 60, leave_m % 60, id(use_24h_clock));
+              snprintf(cdl, sizeof(cdl), "SCHOOL DAY · LEAVE AT %s", lt.c_str());
+              pct = 100;
+            }
+            lv_obj_set_style_bg_color(id(lp_countdown_bar), lv_color_hex(bar_col), LV_PART_INDICATOR);
+            lv_label_set_text(id(lp_countdown_lbl), cdl);
+            lv_bar_set_value(id(lp_countdown_bar), pct, LV_ANIM_OFF);
+          }
+          lv_obj_set_size(id(lp_school_pill), LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+
+          // 2. Left Card: Today's Plan Bullets (Parent Note takes slot 0 if set; uses middle-dot glyph in Fira Code subset)
+          std::string p1 = !id(parent_note_text).empty() ? ("· " + id(parent_note_text))
+                                                         : (cv.plan_lines[0].empty() ? "· Regular Routine" : ("· " + cv.plan_lines[0]));
+          std::string p2 = cv.plan_lines[1].empty() ? "" : ("· " + cv.plan_lines[1]);
+          std::string p3 = cv.plan_lines[2].empty() ? "" : ("· " + cv.plan_lines[2]);
+          lv_label_set_text(id(lp_plan_1), p1.c_str());
+          lv_label_set_text(id(lp_plan_2), p2.c_str());
+          lv_label_set_text(id(lp_plan_3), p3.c_str());
+
+          // 3. Right Card: Weather Prep & Auto Holiday / Back-to-School Countdown
+          float tc = id(cur_wx_temp);
+          float fc = id(cur_wx_feels);
+          bool uf = id(use_fahrenheit);
+          char wxs[48];
+          if (!std::isnan(tc)) {
+            float dt = uf ? world_clock::c_to_f(tc) : tc;
+            float df = std::isnan(fc) ? dt : (uf ? world_clock::c_to_f(fc) : fc);
+            std::string c_raw = id(cur_wx_cond);
+            for (char &ch : c_raw) ch = (char)tolower((unsigned char)ch);
+            const char *c_pretty = "Cloudy";
+            if (c_raw == "sunny") c_pretty = "Sunny";
+            else if (c_raw == "clear-night") c_pretty = "Clear";
+            else if (c_raw == "partlycloudy") c_pretty = "Partly Cloudy";
+            else if (c_raw == "rainy") c_pretty = "Light Rain";
+            else if (c_raw == "pouring") c_pretty = "Heavy Rain";
+            else if (c_raw == "snowy") c_pretty = "Snowy";
+            else if (c_raw == "snowy-rainy") c_pretty = "Sleet";
+            else if (c_raw == "lightning" || c_raw == "lightning-rainy") c_pretty = "Stormy";
+            else if (c_raw == "fog") c_pretty = "Foggy";
+            else if (c_raw == "windy" || c_raw == "windy-variant") c_pretty = "Breezy";
+            snprintf(wxs, sizeof(wxs), "%.0f°%c · Feels %.0f° · %s", dt, uf ? 'F' : 'C', df, c_pretty);
+          } else {
+            snprintf(wxs, sizeof(wxs), "Weather Syncing...");
+          }
+          lv_label_set_text(id(lp_wx_summary), wxs);
+          std::string prep = world_clock::weather_prep_hint(id(cur_wx_cond), tc, uf);
+          lv_label_set_text(id(lp_wx_prep), prep.c_str());
+
+          std::string h_txt = cv.holiday_badge;
+          if (h_txt.empty() && !id(cal_next_event).empty() && id(cal_next_days) > 0) {
+            char hb[56];
+            snprintf(hb, sizeof(hb), "%d SLEEPS TO %s!", id(cal_next_days),
+                     world_clock::to_upper_ascii(id(cal_next_event)).c_str());
+            h_txt = hb;
+          }
+          if (h_txt.empty()) {
+            lv_obj_add_flag(id(lp_holiday_pill), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            #if LVGL_VERSION_MAJOR >= 9
+              lv_obj_remove_flag(id(lp_holiday_pill), LV_OBJ_FLAG_HIDDEN);
+            #else
+              lv_obj_clear_flag(id(lp_holiday_pill), LV_OBJ_FLAG_HIDDEN);
+            #endif
+            lv_label_set_text(id(lp_holiday_lbl), h_txt.c_str());
+          }
+
 interval:
   - interval: 100ms
     then:
       - lambda: |-
-          if (__atomic_load_n(&id(ota_active), __ATOMIC_ACQUIRE) || !id(boot_complete) || id(bg_cache) == nullptr) return;
+          if (__atomic_load_n(&id(ota_active), __ATOMIC_ACQUIRE) || !id(boot_complete) || id(bg_cache) == nullptr || id(launchpad_visible)) return;
           auto utc = id(clock_time).utcnow();
           auto loc = id(clock_time).now();
           world_clock::SpriteFrameParams p;

@@ -36,16 +36,17 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install system tools (ImageMagick & FFmpeg)
+      - name: Install system tools (Ninja, ImageMagick & FFmpeg)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends imagemagick ffmpeg
+          sudo apt-get install -y --no-install-recommends ninja-build imagemagick ffmpeg
 
-      - name: Cache ESPHome & PlatformIO host packages
+      - name: Cache ESPHome & host build packages
         uses: actions/cache@v4
         with:
           path: |
             ~/.platformio
+            ~/.esphome
             ~/.cache/pip
             sim/.esphome
           key: esphome-host-${{ env.ESPHOME_VERSION }}-${{ hashFiles('packages/*.yaml', 'components/world_clock/*', 'sim/*.yaml') }}
@@ -119,9 +120,12 @@ jobs:
         if: matrix.config.upload_bin
         run: |
           mkdir -p dist
-          BUILD_DIR="examples/.esphome/build/${{ matrix.config.dev_name }}/.pioenvs/${{ matrix.config.dev_name }}"
-          cp "${BUILD_DIR}/firmware.ota.bin" "dist/${{ matrix.config.name }}-ota.bin"
-          cp "${BUILD_DIR}/firmware.factory.bin" "dist/${{ matrix.config.name }}-factory.bin"
+          OTA_BIN=$(find "examples/.esphome/build/${{ matrix.config.dev_name }}" -name "firmware.ota.bin" | head -n 1)
+          FAC_BIN=$(find "examples/.esphome/build/${{ matrix.config.dev_name }}" -name "firmware.factory.bin" | head -n 1)
+          echo "Found OTA: ${OTA_BIN}"
+          echo "Found Factory: ${FAC_BIN}"
+          test -n "${OTA_BIN}" && cp "${OTA_BIN}" "dist/${{ matrix.config.name }}-ota.bin"
+          test -n "${FAC_BIN}" && cp "${FAC_BIN}" "dist/${{ matrix.config.name }}-factory.bin"
           ls -lh dist/
 
       - name: Upload compiled standalone firmware artifact

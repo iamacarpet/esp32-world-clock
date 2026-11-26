@@ -157,6 +157,10 @@ script:
             } else {
               tick = world_clock::expand_tokens("BEDTIME AT {bedtime} \u2192 GET READY FOR BED!", tctx);
             }
+          } else if (id(cal_school_holiday)) {
+            tick = "NO SCHOOL · HALF TERM";
+          } else if (id(cal_prominent_active) && !id(cal_prominent_title).empty()) {
+            tick = id(cal_prominent_title);
           } else if (!id(cal_today_event).empty()) {
             tick = "SCHOOL DAY · " + world_clock::to_upper_ascii(id(cal_today_event));
           } else if (mode == 1) {
@@ -199,6 +203,7 @@ script:
             lambda: 'return id(boot_complete) && id(applied_palette) != id(ui_palette);'
           then:
             - script.execute: apply_shell_palette
+      - script.execute: update_launchpad_ui
       - script.execute: update_dock_1hz
 
   - id: sim_flush
@@ -578,6 +583,176 @@ script:
           id(force_redraw) = true;
       - script.execute: sim_sync_ui
       - delay: !lambda 'return (uint32_t)id(sim_video_secs) * 200U + 1200U;'
+
+      # 19. v1.1 Morning Launchpad Takeover (School Day — Thu 12 Nov 2026 08:08 GMT, Leave at 08:30!)
+      - lambda: |-
+          id(use_24h_clock) = false;
+          id(focus_rem_01) = -1.0f;
+          id(cal_prominent_active) = false;
+          id(cur_wx_temp) = 9.0f;
+          id(cur_wx_feels) = 7.0f;
+          id(cur_wx_high) = 12.0f;
+          id(cur_wx_low) = 5.0f;
+          id(cur_wx_cond) = "rainy";
+          id(cur_wx_3day) = "FRI,cloudy,11,6|SAT,partlycloudy,13,5|SUN,sunny,14,6";
+          id(fam_cal_summary) = world_clock::IcsFeedSummary{};
+          id(sch_cal_summary) = world_clock::IcsFeedSummary{};
+          id(fam_cal_summary).valid = true;
+          snprintf(id(fam_cal_summary).today_allday, sizeof(id(fam_cal_summary).today_allday), "PE Kit & Reading Book");
+          id(fam_cal_summary).today_timed[0].valid = true;
+          id(fam_cal_summary).today_timed[0].minute_of_day = 16 * 60;
+          snprintf(id(fam_cal_summary).today_timed[0].title, sizeof(id(fam_cal_summary).today_timed[0].title), "Swimming Lesson");
+          snprintf(id(fam_cal_summary).tomorrow_title, sizeof(id(fam_cal_summary).tomorrow_title), "Non-Uniform Day");
+          id(sch_cal_summary).valid = true;
+          id(sch_cal_summary).next_school_holiday_days = 8;
+          snprintf(id(sch_cal_summary).next_school_holiday_name, sizeof(id(sch_cal_summary).next_school_holiday_name), "Half Term");
+          id(cal_school_configured) = true;
+          id(cal_school_holiday) = false;
+          id(cal_today_event) = "Swimming Lesson (4 PM)";
+          id(school_leave_min) = 8 * 60 + 30;
+          id(cal_display_style) = 2;
+          id(launchpad_visible) = true;
+          id(clock_time).set_epoch(1794470880, 1.0);  // Thu 12 Nov 2026 08:08:00 GMT
+          id(force_redraw) = true;
+      - script.execute: sim_flush
+      - script.wait: sim_flush
+      - snapshot.take: { id: main_display, filename: "19_calendar_morning_launchpad.bmp" }
+
+      # 20. v1.1 Morning Launchpad (No-School Half Term + Auto Back-to-School Countdown — Wed 28 Oct 2026 09:15 GMT)
+      - lambda: |-
+          id(cur_wx_temp) = 15.0f;
+          id(cur_wx_feels) = 14.0f;
+          id(cur_wx_high) = 17.0f;
+          id(cur_wx_low) = 8.0f;
+          id(cur_wx_cond) = "sunny";
+          id(fam_cal_summary) = world_clock::IcsFeedSummary{};
+          id(sch_cal_summary) = world_clock::IcsFeedSummary{};
+          id(fam_cal_summary).valid = true;
+          id(fam_cal_summary).today_timed[0].valid = true;
+          id(fam_cal_summary).today_timed[0].minute_of_day = 10 * 60 + 30;
+          snprintf(id(fam_cal_summary).today_timed[0].title, sizeof(id(fam_cal_summary).today_timed[0].title), "Science Museum Trip");
+          snprintf(id(fam_cal_summary).tomorrow_title, sizeof(id(fam_cal_summary).tomorrow_title), "Grandma Visiting");
+          id(sch_cal_summary).valid = true;
+          id(sch_cal_summary).today_is_school_holiday = true;
+          snprintf(id(sch_cal_summary).school_note, sizeof(id(sch_cal_summary).school_note), "Half Term");
+          id(sch_cal_summary).back_to_school_days = 5;
+          id(cal_school_configured) = true;
+          id(cal_school_holiday) = true;
+          id(cal_today_event) = "";
+          id(launchpad_visible) = true;
+          id(clock_time).set_epoch(1793178900, 1.0);  // Wed 28 Oct 2026 09:15:00 GMT
+          id(force_redraw) = true;
+      - script.execute: sim_flush
+      - script.wait: sim_flush
+      - snapshot.take: { id: main_display, filename: "20_calendar_no_school_holiday.bmp" }
+
+      # 21. v1.1 Prominent Band 3 Calendar Dock Card (World Map + ISS + Imminent Timed Event Countdown!)
+      - lambda: |-
+          id(launchpad_visible) = false;
+          id(badge_mode_applied) = 255;
+          id(cal_school_holiday) = false;
+          id(cal_display_style) = 1;
+          id(cal_prominent_active) = true;
+          id(cal_prominent_title) = "SWIMMING LESSON IN 25 MIN!";
+          id(cal_prominent_sub) = "Today: PE Kit · 8 sleeps to Half Term";
+          id(cur_wx_temp) = 13.4f;
+          id(cur_wx_feels) = 12.0f;
+          id(cur_wx_high) = 15.0f;
+          id(cur_wx_low) = 7.0f;
+          id(cur_wx_cond) = "partlycloudy";
+          id(iss_cur_lat) = 44.0f;
+          id(iss_cur_lon) = -12.0f;
+          id(iss_fix_ms) = millis();
+          id(clock_time).set_epoch(1794497700, 1.0);  // Thu 12 Nov 2026 15:35:00 GMT
+          id(force_redraw) = true;
+      - script.execute: sim_flush
+      - script.wait: sim_flush
+      - snapshot.take: { id: main_display, filename: "21_calendar_prominent_dock.bmp" }
+
+      # 22. v1.1 Teen & Study Desk Profile (24-Hour Clock + Active 25m Focus Pomodoro Timer + 5 Progress Stars!)
+      - lambda: |-
+          id(use_24h_clock) = true;
+          id(cal_prominent_active) = false;
+          id(cal_today_event) = "";
+          id(focus_is_break) = false;
+          id(focus_rem_01) = 0.85f;
+          id(focus_title) = "FOCUS STUDY · 21:15 LEFT";
+          id(focus_sub) = "Stay in flow · 5m break next";
+          id(clock_time).set_epoch(1794501300, 1.0);  // Thu 12 Nov 2026 16:35:00 GMT
+          id(force_redraw) = true;
+      - script.execute: sim_flush
+      - script.wait: sim_flush
+      - snapshot.take: { id: main_display, filename: "22_teen_focus_pomodoro.bmp" }
+
+      # Video 12: Calendar Display Styles & Multi-Age Walkthrough (Launchpad -> Half Term -> Prominent Dock -> Focus Pomodoro!)
+      - lambda: |-
+          id(use_24h_clock) = false;
+          id(focus_rem_01) = -1.0f;
+          id(cal_prominent_active) = false;
+          id(cur_wx_temp) = 9.0f;
+          id(cur_wx_feels) = 7.0f;
+          id(cur_wx_cond) = "rainy";
+          id(fam_cal_summary) = world_clock::IcsFeedSummary{};
+          id(sch_cal_summary) = world_clock::IcsFeedSummary{};
+          id(fam_cal_summary).valid = true;
+          snprintf(id(fam_cal_summary).today_allday, sizeof(id(fam_cal_summary).today_allday), "PE Kit & Reading Book");
+          id(fam_cal_summary).today_timed[0].valid = true;
+          id(fam_cal_summary).today_timed[0].minute_of_day = 16 * 60;
+          snprintf(id(fam_cal_summary).today_timed[0].title, sizeof(id(fam_cal_summary).today_timed[0].title), "Swimming Lesson");
+          snprintf(id(fam_cal_summary).tomorrow_title, sizeof(id(fam_cal_summary).tomorrow_title), "Non-Uniform Day");
+          id(sch_cal_summary).valid = true;
+          id(sch_cal_summary).next_school_holiday_days = 8;
+          snprintf(id(sch_cal_summary).next_school_holiday_name, sizeof(id(sch_cal_summary).next_school_holiday_name), "Half Term");
+          id(cal_school_configured) = true;
+          id(cal_school_holiday) = false;
+          id(cal_today_event) = "Swimming Lesson (4 PM)";
+          id(launchpad_visible) = true;
+          id(clock_time).set_epoch(1794470880, 1.0);
+          id(force_redraw) = true;
+      - script.execute: sim_flush
+      - script.wait: sim_flush
+      - lambda: |-
+          uint32_t frames = (uint32_t)id(sim_video_secs) * 10U;
+          ESP_LOGI("sim", "Recording video_12_calendar_morning.gif (%u frames @ 10 fps = %ds)...", frames, id(sim_video_secs));
+          id(main_display).take_animation("video_12_calendar_morning.gif", frames, 10.0f);
+      - delay: !lambda 'return (uint32_t)id(sim_video_secs) * 250U;'
+      - lambda: |-
+          id(cur_wx_temp) = 15.0f;
+          id(cur_wx_cond) = "sunny";
+          id(sch_cal_summary).today_is_school_holiday = true;
+          snprintf(id(sch_cal_summary).school_note, sizeof(id(sch_cal_summary).school_note), "Half Term");
+          id(sch_cal_summary).back_to_school_days = 5;
+          id(cal_school_holiday) = true;
+          id(cal_today_event) = "";
+          id(clock_time).set_epoch(1793178900, 1.0);
+          id(force_redraw) = true;
+      - script.execute: sim_sync_ui
+      - delay: !lambda 'return (uint32_t)id(sim_video_secs) * 250U;'
+      - lambda: |-
+          id(launchpad_visible) = false;
+          id(badge_mode_applied) = 255;
+          id(cal_school_holiday) = false;
+          id(cal_prominent_active) = true;
+          id(cal_prominent_title) = "SWIMMING LESSON IN 25 MIN!";
+          id(cal_prominent_sub) = "Today: PE Kit · 8 sleeps to Half Term";
+          id(cur_wx_temp) = 13.4f;
+          id(cur_wx_cond) = "partlycloudy";
+          id(clock_time).set_epoch(1794497700, 1.0);
+          id(force_redraw) = true;
+      - script.execute: sim_sync_ui
+      - delay: !lambda 'return (uint32_t)id(sim_video_secs) * 250U;'
+      - lambda: |-
+          id(use_24h_clock) = true;
+          id(cal_prominent_active) = false;
+          id(focus_is_break) = false;
+          id(focus_rem_01) = 0.85f;
+          id(focus_title) = "FOCUS STUDY · 21:15 LEFT";
+          id(focus_sub) = "Stay in flow · 5m break next";
+          id(clock_time).set_epoch(1794501300, 1.0);
+          id(force_redraw) = true;
+      - script.execute: sim_sync_ui
+      - delay: !lambda 'return (uint32_t)id(sim_video_secs) * 250U + 1200U;'
+
       - lambda: |-
           ESP_LOGI("sim", "All Leo standalone simulator captures complete! Exiting cleanly.");
           std::exit(0);

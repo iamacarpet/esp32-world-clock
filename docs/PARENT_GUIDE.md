@@ -14,27 +14,44 @@ Every clock has its own unique address and password printed right on its boot sc
    - **Password**: `clock-XXXXXX` *(matches the 6 characters on your screen)*
 
 > **Running multiple clocks in one home?** Each clock automatically gets its own unique `world-clock-XXXXXX.local` address and `clock-XXXXXX` password from its hardware ID, so sibling clocks never clash!
+>
+> **Sleep-Safe Red QR Code:** Even if the power briefly blinks at 2 AM, the boot screen uses dim **night-vision red-on-black** (zero blue/white light!) and automatically skips the 4-second info splash between 10 PM and 6 AM so it drops straight back into dim Red Sleep Mode.
 
 ---
 
 ## 2. Automatic Family & School Calendar Integration (Set Once, Never Touch Again!)
 
-Instead of opening the clock's settings every week, you can link your existing **Apple iCloud**, **Google Calendar**, and/or **School Term Calendar**. The clock checks them silently every 30 minutes in the background and shows calm, predictable daily heads-ups in the header ticker — ideal for busy mornings and neurodivergent / autistic children who love knowing what's coming next!
+Instead of opening the clock's settings every week, you can link your existing **Apple iCloud**, **Google Calendar**, and/or **School Term Calendar** (on **both Standalone AND Home Assistant clocks**!). The clock checks them silently every 30 minutes in the background and turns your normal calendar into calm, predictable daily guidance — ideal for busy school mornings and neurodivergent / autistic children who love knowing exactly what's coming next!
 
-### What Your Clock Shows Automatically
-- **Morning & Daytime**:
-  - `"SCHOOL DAY · SWIMMING LESSON (4 PM)"`
-  - `"NO SCHOOL · HALF TERM HOLIDAY"`
-  - `"WEEKEND · NO SCHOOL"`
-  - `"TODAY → PE KIT & TRAINERS"`
-- **Afternoon & Evening (from 3 PM & during Wind-Down)**:
-  - `"TOMORROW → DENTIST"` *(gentle heads-up so there are no morning surprises!)*
-- **Automatic Event Countdowns**:
-  - Any event in the next **14 days** automatically shows `"6 SLEEPS TO GRANDMA VISIT!"`.
-  - **Special `Countdown:` Tag (up to 90 days ahead!)**: Start any event title with **`Countdown:`** (or add **`[countdown]`**) — e.g. `Countdown: Cornwall Holiday` or `Disney Trip [countdown]`. The clock strips the tag cleanly and prioritizes your big countdown (`"42 SLEEPS TO CORNWALL HOLIDAY!"`) over routine reminders!
-- **Automatic School Holiday & Inset Day Detection**:
-  - When you add your school's public `.ics` calendar — **or** add **`[no school]`** / **`[holiday]`** to any event in your Family Calendar (e.g., `Inset Day [no school]`) — the clock automatically recognizes keywords like *Holiday, Half Term, Inset, Closed, Training Day, Bank Holiday, No School* and displays **"NO SCHOOL"**!
-  - If **Enable Weekend Lie-In** and **Include School Holidays in Lie-In** are turned on, the clock even shifts Morning Quiet Play & Wake-Up later on Inset Days and Half Term automatically!
+![Calendar & Multi-Age Walkthrough](media/video_12_calendar_morning.gif)
+
+### Choose Your Calendar Display Style
+Pick how prominent you want your calendar to look under **Calendar Display Style**:
+
+1. **Subtle Ticker Only** *(Default)* — Keeps the full live World Map & 3-day forecast visible, rotating calm calendar headlines along the top ticker (`"SCHOOL DAY · SWIMMING LESSON (4 PM)"`).
+2. **Prominent Dock Card** — Keeps the full World Map & ISS visible, while turning the bottom-right dock card into a clean **"TODAY'S PLAN"** card with a live countdown for timed events (`"SWIMMING LESSON IN 25 MIN!"`):
+   ![Prominent Calendar Dock Card](media/21_calendar_prominent_dock.png)
+3. **Morning Launchpad Takeover** *(Autism-Friendly School Morning Mode)* — Between **6:45 AM** and **5 minutes past your Leave for School Time**, Band 2 gently switches to a calm, structured morning briefing board (then automatically returns to the live World Map!):
+   - Top **School Day** (teal) or **No School · Half Term** (warm amber) badge + live **"LEAVE FOR SCHOOL IN 22 MIN"** progress bar
+   - **Today's Plan & Routine** (Parent Note, timed events, all-day items like PE Kit, and Tomorrow heads-up)
+   - **Weather Prep Checklist** (e.g. *"Warm Raincoat & Umbrella"*, *"Big Coat, Gloves & Scarf"*, *"Sun Hat, Suncream & Water"*)
+   - **Automatic Holiday & Back-to-School Badge**: counts down **"8 SLEEPS TO HALF TERM!"** during term time and **"5 SLEEPS TO BACK TO SCHOOL"** during school holidays (automatically skipping Sat/Sun weekends!)
+
+| School Day Morning Launchpad | Half Term No-School Launchpad |
+| :---: | :---: |
+| ![Morning Launchpad School Day](media/19_calendar_morning_launchpad.png) | ![Morning Launchpad No School Half Term](media/20_calendar_no_school_holiday.png) |
+
+### Multi-Event Priority Engine (`Calendar Priority Mode`)
+What happens when you have a timed event today, an all-day event today, AND multiple countdowns running at once?
+- **Timed Events Automatically Count Down & Auto-Expire**: Within 90 minutes of start time, `"SWIMMING LESSON"` becomes `"SWIMMING LESSON IN 25 MIN!"` → `"SWIMMING LESSON NOW!"`, and automatically disappears 30 minutes after start time so stale morning events never clutter the afternoon!
+- **3 Parent-Selectable Priority Modes**:
+  - **`Smart Auto`** *(Recommended)*: Imminent timed events (within 90 min) take #1 priority; otherwise alternates calmly between Today's Routine, Priority `Countdown:` tags, Tomorrow's heads-up (from 3 PM), and automatic School Holiday countdowns.
+  - **`Today & Routine First`**: Always leads with today's events & school status; saves countdowns for quiet days.
+  - **`Countdowns First`**: Keeps upcoming holidays & trips front-and-center alongside imminent timed events.
+
+### Helpful Event Tags You Can Use Right in Apple/Google Calendar
+- **`Countdown:` or `[countdown]`** *(up to 90 days ahead!)* — e.g. `Countdown: Cornwall Holiday` or `Disney Trip [countdown]`. The clock strips the tag cleanly and prioritizes up to 2 concurrent countdowns (`"42 SLEEPS TO CORNWALL HOLIDAY!"`).
+- **`[no school]` or `[holiday]`** — Add this to any Family Calendar event (or link your School's `.ics` feed, which auto-detects *Holiday, Half Term, Inset, Training Day, Teacher Day, Closed, Bank Holiday, No School*) to trigger **NO SCHOOL** badges, **Morning Lie-In**, and **Non-School Night Late Bedtime** automatically!
 
 ### Step-by-Step: Getting Your Calendar Link
 
@@ -61,7 +78,13 @@ Instead of opening the clock's settings every week, you can link your existing *
 ## 3. All Web Settings Explained
 
 ### 1. Quick Controls & Overrides
-- **Occasion & Preview Mode**: Test any holiday or sleep mode right away (automatically reverts to `Auto` after 10 minutes so you can't forget!).
+- **Occasion & Preview Mode**: Test any holiday, sleep phase, **Morning Launchpad Preview**, **No-School Holiday Preview**, or **Focus Study Timer Preview** right away (automatically reverts to `Auto` after 10 minutes so you can't forget!).
+- **Age & Visual Profile (Ages 3–16+)**: One-tap preset tailored to your child's age:
+  - **Little Explorer (3–6)**: 12h clock, full 4-phase sleep trainer, 5 countdown stars, all holidays.
+  - **Junior Space Kid (7–11)**: 12h clock, World Map, ISS tracker, Morning Launchpad, holidays & sleep trainer.
+  - **Teen & Study Desk (12+)**: Clean 24-hour desk clock, World Map, ISS, Calendar & **Focus Pomodoro Study Timer** (turns off kiddie holidays & sleep trainer cards automatically!):
+    ![Teen & Study Desk Focus Pomodoro](media/22_teen_focus_pomodoro.png)
+- **Focus Pomodoro Study Timer (`Start 25m Focus Study` / `Start 5m Focus Break` / `Stop Focus Timer`)**: Turns the bottom-right dock into a live `MM:SS` focus/break countdown with 5 glowing teal progress stars — great for homework, reading, or GCSE revision!
 - **Screen Backlight**: Manual override slider if you want to brighten/dim temporarily.
 - **Message of the Day (Auto-Clears at Midnight)**: Type a one-off reminder like `"PE kit today!"` or `"Grandma picking up!"` — shows right at the top until midnight or cleared.
 - **Tooth Fairy Tonight!**: One-tap toggle for when a tooth falls out! Turns Evening Wind-Down into a magical twinkling tooth card (`"SHHH... TOOTH FAIRY TONIGHT!"`) with floating golden fairy dust on the map, and turns itself back off at noon the next day.
@@ -82,7 +105,10 @@ Every phase can be turned **ON or OFF** independently:
 3. **Morning Quiet Play (Amber)** — Rising-sun icon (*"OK to play quietly in your room"*)
 4. **Morning Wake-Up (Daytime)** — Full bright World Map, Weather & ISS Tracker
 - **5 Sleep Countdown Stars**: Toggleable row of 5 glowing stars during Wind-Down, Sleep, and Naps that gently fade out one by one so younger children can see how long is left without reading digital numbers.
-- **Weekend & School-Holiday Lie-In**: Optional +5 to +90 minute shift for Saturday/Sunday mornings (and optionally School Holidays / Inset Days!).
+- **Weekend & School-Holiday Lie-In (Morning)**: Optional +5 to +90 minute shift for **Quiet Play** and **Wake-Up** whenever **TODAY** is Saturday, Sunday, or a School Holiday / Inset Day.
+- **Symmetric Non-School Night Late Bedtime (Evening)**: Optional +5 to +90 minute shift for **Evening Wind-Down** and **Bedtime** whenever **TOMORROW** is a non-school day!
+  - **Friday & Saturday nights** (or the night before a Monday Inset Day / Half Term) → automatically shift bedtime later!
+  - **Sunday nights before Monday school** → automatically return to the early school-night bedtime so Monday mornings stay smooth!
 - **4 Brightness Sliders**: Independent brightness for Day, Wind-Down, Quiet Play, and Deep Sleep.
 
 ### 4. Custom Screen Wording (`{tokens}`)
@@ -113,7 +139,14 @@ Personalize any ticker or card message! Use these dynamic placeholders so changi
 
 ## 5. Home Assistant Calendar Setup (For HA Users)
 
-If you run a Home Assistant clock (`packages/backend_homeassistant.yaml`), include `packages/ha_calendar_sensors.yaml` and add this snippet to Home Assistant's `configuration.yaml` (pointing at your HA `calendar.family` and `calendar.school` entities):
+### Option A (Recommended — Zero Home Assistant Calendar Setup!)
+Home Assistant clocks (`packages/backend_homeassistant.yaml`) include the **exact same built-in Core 0 `.ics` / `webcal://` calendar engine**! You do **not** need to set up any Home Assistant Calendar integration or template sensors:
+1. Open your clock's device page in Home Assistant (**Settings → Devices & Services → ESPHome → your clock**).
+2. Paste your Apple iCloud (`webcal://...`) or Google `.ics` link directly into **Family Calendar URL** and/or **School Term & Holiday Calendar URL**.
+3. Pick your **Calendar Display Style** (`Subtle Ticker Only`, `Prominent Dock Card`, or `Morning Launchpad Takeover`), **Calendar Priority Mode**, and **Leave for School Time** — and press **Sync Calendars Now**!
+
+### Option B (Optional — Home Assistant Template Sensors)
+If you prefer feeding events from local Home Assistant `calendar.*` entities instead of `.ics` URLs, include `packages/ha_calendar_sensors.yaml` and add this snippet to Home Assistant's `configuration.yaml`:
 
 ```yaml
 template:

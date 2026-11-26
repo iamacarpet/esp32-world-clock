@@ -5,12 +5,12 @@ A high-craft, dual-core **ESPHome + LVGL 9** 800×480 digital clock, world day/n
 ![World & Space Clock Overview Gallery](docs/media/overview_gallery.png)
 
 Available in **three plug-and-play flavours** from one modular codebase:
-1. **Universal Standalone Kids Clock** (`examples/world-clock-standalone-release.yaml` / `examples/leo-clock-standalone.yaml`) — Zero Home Assistant needed! Core 0 background worker polls Open-Meteo, live ISS feeds, and optional **Apple iCloud / Google / School `.ics` calendars**, Google Public NTP, Captive Portal Wi-Fi setup with **on-screen QR codes**, automatic per-device MAC hostname & login, runtime timezone selector, and a full iPhone-friendly local Web UI.
-2. **Home Assistant Kids Clock** (`examples/leo-clock-ha.yaml`) — Native encrypted ESPHome API with HA weather, ISS, optional HA family/school calendars (`packages/ha_calendar_sensors.yaml`), time, and 4-phase circadian dimming.
+1. **Universal Standalone Kids & Teen Clock** (`examples/world-clock-standalone-release.yaml` / `examples/leo-clock-standalone.yaml`) — Zero Home Assistant needed! Core 0 background worker polls Open-Meteo, live ISS feeds, and optional **Apple iCloud / Google / School `.ics` calendars**, Google Public NTP, Captive Portal Wi-Fi setup with **sleep-safe red-on-black QR codes**, automatic per-device MAC hostname & login, runtime timezone selector, **Age & Visual Profiles (Ages 3–16+)**, **Focus Study Pomodoro timer**, and a full iPhone-friendly local Web UI.
+2. **Home Assistant Kids & Teen Clock** (`examples/leo-clock-ha.yaml`) — Native encrypted ESPHome API with HA weather, ISS, **direct Core 0 `.ics` / `webcal://` calendar URLs right inside Home Assistant** (zero HA calendar integration needed — or optional HA calendar sensors), symmetric school-night bedtimes, Morning Launchpad, Focus Pomodoro, and 4-phase circadian dimming.
 3. **Adult / Office Desk** (`examples/office-clock-energy-ha.yaml`) — Same live world map, solar terminator, night-side city lights & ISS tracker, with a **pluggable Band 3 dock** swapped out for live Home Assistant Solar / Load / Battery / Grid & Tariff telemetry (or any custom HA dock you build!).
 
 **Parent & Gift Box Guides:**
-- [**Parent Guide (`docs/PARENT_GUIDE.md`)**](docs/PARENT_GUIDE.md) — Plain-English guide to every Web UI setting, Apple iCloud / Google / School `.ics` calendars, `Countdown:` & `[no school]` tags, Weekend Lie-In, Tooth Fairy mode, and iPhone OTA updates.
+- [**Parent Guide (`docs/PARENT_GUIDE.md`)**](docs/PARENT_GUIDE.md) — Plain-English guide to every setting, Apple iCloud / Google / School `.ics` calendars (Standalone & Home Assistant), Morning Launchpad, Multi-Event Priority Modes, Symmetric School-Night Bedtimes, Focus Pomodoro, Tooth Fairy mode, and iPhone OTA updates.
 - [**Printable 1-Page Quick-Start Card (`docs/QUICK_START_CARD.md`)**](docs/QUICK_START_CARD.md) — Ready to print and pop inside a gift box!
 
 ---
@@ -28,15 +28,28 @@ Each phase can be enabled/disabled and customized independently (times, brightne
 | :---: | :---: |
 | ![Deep Sleep Red](docs/media/05_deep_sleep_red.png) | ![Morning Quiet Play Amber](docs/media/06_morning_quiet_amber.png) |
 
-| Tooth Fairy Tonight! (One-Tap Wind-Down Magic) | On-Screen Scannable QR Setup & Auto-Identity |
+| Tooth Fairy Tonight! (One-Tap Wind-Down Magic) | Sleep-Safe Red QR Boot Setup & Auto-Identity |
 | :---: | :---: |
-| ![Tooth Fairy Mode](docs/media/18_tooth_fairy_winddown.png) | ![Boot Screen with QR Code and Unique Login](docs/media/01_boot_splash.png) |
+| ![Tooth Fairy Mode](docs/media/18_tooth_fairy_winddown.png) | ![Boot Screen with Sleep-Safe Red QR Code and Unique Login](docs/media/01_boot_splash.png) |
 
-### Live Space Tracker, Family/School Calendar & Units
+### Family & School Calendars, Morning Launchpad & Multi-Age Study Desk
+Choose between **Subtle Ticker Only**, **Prominent Dock Card**, or **Morning Launchpad Takeover** (calm autism-friendly daily briefing with live Leave-for-School countdown, weather prep checklist, and automatic *"X SLEEPS TO HALF TERM!"* / *"X SLEEPS TO BACK TO SCHOOL"* badges), plus **Symmetric School-Night Bedtimes** (Friday/Saturday/pre-holiday late bedtime; Sunday night automatically reverts to early school-night bedtime!) and **Age & Visual Profiles (Ages 3–16+)** with a built-in **25m / 5m Focus Pomodoro Timer**:
 
-| Live ISS Orbit + Forward Projection & Night Lights | School/Family Calendar Routine + Fog + Imperial (`°F`) |
+| Calendar & Multi-Age Walkthrough (Animated) | Morning Launchpad — School Day & Leave Countdown |
 | :---: | :---: |
-| ![Live ISS Orbit](docs/media/video_01_iss_orbit.gif) | ![School Calendar, Fog Weather and Imperial Units](docs/media/03_daytime_fog_imperial.png) |
+| ![Calendar & Multi-Age Walkthrough](docs/media/video_12_calendar_morning.gif) | ![Morning Launchpad School Day](docs/media/19_calendar_morning_launchpad.png) |
+
+| Morning Launchpad — No-School Half Term & Back-to-School | Prominent Band 3 Calendar Dock Card (Imminent Countdown) |
+| :---: | :---: |
+| ![Morning Launchpad No School Half Term](docs/media/20_calendar_no_school_holiday.png) | ![Prominent Calendar Dock Card](docs/media/21_calendar_prominent_dock.png) |
+
+| Teen & Study Desk Profile (24h Clock + Focus Pomodoro) | Subtle Calendar Ticker + Fog Weather + Imperial (`°F`) |
+| :---: | :---: |
+| ![Teen Focus Pomodoro Study Desk](docs/media/22_teen_focus_pomodoro.png) | ![School Calendar, Fog Weather and Imperial Units](docs/media/03_daytime_fog_imperial.png) |
+
+| Live ISS Orbit + Forward Projection & Night Lights |
+| :---: |
+| ![Live ISS Orbit](docs/media/video_01_iss_orbit.gif) |
 
 ### Automatic Seasonal & Special Occasions (Live Animations)
 Triggered automatically on the right dates (or previewed on-demand for 10 minutes before auto-reverting to `Auto`):
@@ -199,7 +212,7 @@ This repo includes a native **ESPHome `host:` + `SnapshotDisplay` headless emula
 # Run C++ unit tests (4-phase schedule, Easter boundaries, lunar phase, UTF-8, JSON)
 g++ -std=c++17 -Wall -Wextra -Werror -Icomponents/world_clock tests/test_clock_math.cpp -o /tmp/test_clock_math && /tmp/test_clock_math
 
-# Run the headless emulator locally to capture all 17 mode PNGs, contact sheet & 11 animated mode videos
+# Run the headless emulator locally to capture all 22 mode PNGs, contact sheet & 12 animated mode videos
 # (defaults to 30s per animated mode; pass --video-seconds 5 for fast local iteration or 60 for longer reels)
 python3 scripts/run_emulator.py --out sim_output --video-seconds 30
 ```
@@ -208,5 +221,5 @@ python3 scripts/run_emulator.py --out sim_output --video-seconds 30
 - **CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml))** — Runs on every push to `master`/`main` and every PR:
   1. C++ unit tests (`-Wall -Wextra -Werror`)
   2. Real ESP32-S3 firmware compilation across all 4 example/release configs (`leo-clock-standalone`, `world-clock-standalone-release`, `leo-clock-ha`, `office-clock-energy-ha`)
-  3. Headless emulator run uploading all 17 PNGs, `overview_gallery.png`, 11 × 30-second H.264 MP4 videos, plus a combined `demo_reel.mp4` as workflow artifacts
+  3. Headless emulator run uploading all 22 PNGs, `overview_gallery.png`, 12 × 30-second H.264 MP4 videos, plus a combined `demo_reel.mp4` as workflow artifacts
 - **Release ([`.github/workflows/release.yml`](.github/workflows/release.yml))** — Triggered on `git tag v1.0.0 && git push origin v1.0.0`: compiles the universal multi-device standalone firmware and attaches `*-factory.bin`, `*-ota.bin`, `SHA256SUMS.txt`, `overview_gallery.png`, and `demo_reel.mp4` straight to the GitHub Release.

@@ -217,7 +217,8 @@ class NetWorker {
         next_cal_ms = now_ms;
       }
 
-      // 1. Open-Meteo Weather + 3-Day Forecast
+      // 1. Open-Meteo Weather + 3-Day Forecast (Standalone mode only)
+#if defined(USE_WORLD_CLOCK_STANDALONE_POLL)
       if ((int32_t)(now_ms - next_wx_ms) >= 0) {
         __atomic_store_n(&t.sync_busy, true, __ATOMIC_RELEASE);
         while (__atomic_test_and_set(&t.lock, __ATOMIC_ACQUIRE)) vTaskDelay(1);
@@ -347,8 +348,16 @@ class NetWorker {
         }
         __atomic_store_n(&t.sync_busy, false, __ATOMIC_RELEASE);
       }
+#else
+      (void)next_wx_ms;
+      (void)next_iss_ms;
+      (void)wx_backoff_ms;
+      (void)iss_backoff_ms;
+      (void)kIssPrimary;
+      (void)kIssFallback;
+#endif
 
-      // 3. Optional Family & School Calendar (.ics / webcal://) Streaming Poll (every 30 min)
+      // 3. Optional Family & School Calendar (.ics / webcal://) Streaming Poll (every 30 min — Standalone & HA!)
       now_ms = esphome::millis();
       if ((int32_t)(now_ms - next_cal_ms) >= 0) {
         char fam_u[256] = "";

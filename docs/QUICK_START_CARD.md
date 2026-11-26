@@ -28,12 +28,12 @@ Once connected, the clock displays a **second QR Code**, its personal web addres
 - **Password**: `clock-XXXXXX` *(matches the 6 characters on your screen)*
 
 Scan the QR code (or type the address into Safari/Chrome) to customize:
-- **Child's Name, Birth Date & Home Town** (plus Timezone & `°C / °F`)
-- **4-Phase Sleep Schedule**: Evening Wind-Down (Amber), Deep Sleep (Red with 5 fading stars & real moon phase), Morning Quiet Play (Amber), Weekend & School-Holiday Lie-In, and brightness levels
-- **One-Tap Magic**: **Tooth Fairy Tonight!**, **Message of the Day** (auto-clears at midnight), **Nap Timer**, and **Custom Event Countdown**
-- **Automatic Family & School Calendars** (optional — see below!)
+- **Child's Name, Birth Date & Home Town** (plus Timezone, `°C / °F`, and **Age Profile: Little Explorer / Junior Space Kid / Teen Study Desk**)
+- **4-Phase Sleep Schedule**: Evening Wind-Down (Amber), Deep Sleep (Red with 5 fading stars & real moon phase), Morning Quiet Play (Amber), **Weekend & School-Holiday Morning Lie-In**, and **Symmetric Friday/Saturday Late Bedtime** (automatically stays early on Sunday school nights!)
+- **One-Tap Magic & Study Tools**: **Tooth Fairy Tonight!**, **Message of the Day** (auto-clears at midnight), **Nap Timer**, **25m/5m Focus Study Pomodoro Timer**, and **Custom Event Countdown**
+- **Automatic Family & School Calendars** (optional — Subtle Ticker, Prominent Dock Card, or **Morning Launchpad** with Leave-for-School countdown & Half-Term / Back-to-School badges!)
 
-> **Forgot your clock's address or password?** Just unplug the USB-C cable and plug it back in — your unique URL, IP address, QR code, and login are shown right on the screen every time it starts up!
+> **Forgot your clock's address or password?** Just unplug the USB-C cable and plug it back in — your unique URL, IP address, sleep-safe red QR code, and login are shown right on the screen every time it starts up! *(During late-night power cuts between 10 PM and 6 AM, the clock skips the boot splash hold and drops straight to dim Red Sleep Mode.)*
 
 ---
 

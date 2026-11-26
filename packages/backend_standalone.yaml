@@ -133,6 +133,79 @@ select:
   - id: !extend occasion_select
     web_server: { sorting_group_id: grp_controls, sorting_weight: 10 }
   - platform: template
+    id: cfg_age_profile
+    name: "Age & Visual Profile"
+    optimistic: true
+    restore_value: true
+    initial_option: "Junior Space Kid (7-11)"
+    options:
+      - "Little Explorer (3-6)"
+      - "Junior Space Kid (7-11)"
+      - "Teen & Study Desk (12+)"
+    web_server: { sorting_group_id: grp_controls, sorting_weight: 15 }
+    on_value:
+      then:
+        - lambda: |-
+            if (x == "Teen & Study Desk (12+)") {
+              id(minimal_teen_mode) = true;
+              id(cfg_use_24h).publish_state(true);
+              id(cfg_holidays_en).publish_state(false);
+              id(cfg_winddown_en).publish_state(false);
+              id(cfg_sleep_en).publish_state(false);
+              id(cfg_quiet_en).publish_state(false);
+            } else if (x == "Little Explorer (3-6)") {
+              id(minimal_teen_mode) = false;
+              id(cfg_use_24h).publish_state(false);
+              id(cfg_holidays_en).publish_state(true);
+              id(cfg_winddown_en).publish_state(true);
+              id(cfg_sleep_en).publish_state(true);
+              id(cfg_quiet_en).publish_state(true);
+              id(cfg_sleep_stars_en).publish_state(true);
+            } else {
+              id(minimal_teen_mode) = false;
+              id(cfg_use_24h).publish_state(false);
+              id(cfg_holidays_en).publish_state(true);
+              id(cfg_winddown_en).publish_state(true);
+              id(cfg_sleep_en).publish_state(true);
+              id(cfg_quiet_en).publish_state(true);
+            }
+            id(force_redraw) = true;
+        - script.execute: save_prefs_debounced
+  - platform: template
+    id: cfg_cal_priority
+    name: "Calendar Priority Mode"
+    optimistic: true
+    restore_value: true
+    initial_option: "Smart Auto"
+    options:
+      - "Smart Auto"
+      - "Today & Routine First"
+      - "Countdowns First"
+    web_server: { sorting_group_id: grp_calendar, sorting_weight: 25 }
+    on_value:
+      then:
+        - lambda: |-
+            id(cal_priority_mode) = (x == "Today & Routine First") ? 1 : ((x == "Countdowns First") ? 2 : 0);
+            id(force_redraw) = true;
+        - script.execute: save_prefs_debounced
+  - platform: template
+    id: cfg_cal_style
+    name: "Calendar Display Style"
+    optimistic: true
+    restore_value: true
+    initial_option: "Subtle Ticker Only"
+    options:
+      - "Subtle Ticker Only"
+      - "Prominent Dock Card"
+      - "Morning Launchpad Takeover"
+    web_server: { sorting_group_id: grp_calendar, sorting_weight: 26 }
+    on_value:
+      then:
+        - lambda: |-
+            id(cal_display_style) = (x == "Prominent Dock Card") ? 1 : ((x == "Morning Launchpad Takeover") ? 2 : 0);
+            id(force_redraw) = true;
+        - script.execute: save_prefs_debounced
+  - platform: template
     id: cfg_timezone
     name: "Timezone"
     optimistic: true
@@ -202,6 +275,40 @@ button:
             id(nap_end_ms) = 0;
             id(winddown_override_yday) = -1;
             id(force_redraw) = true;
+  - platform: template
+    name: "Start 25m Focus Study"
+    id: start_focus_btn
+    web_server: { sorting_group_id: grp_controls, sorting_weight: 62 }
+    on_press:
+      then:
+        - lambda: |-
+            id(focus_is_break) = false;
+            id(focus_total_ms) = 25UL * 60000UL;
+            id(focus_end_ms) = millis() + id(focus_total_ms);
+            if (id(focus_end_ms) == 0) id(focus_end_ms) = 1;
+            id(force_redraw) = true;
+  - platform: template
+    name: "Start 5m Focus Break"
+    id: start_break_btn
+    web_server: { sorting_group_id: grp_controls, sorting_weight: 64 }
+    on_press:
+      then:
+        - lambda: |-
+            id(focus_is_break) = true;
+            id(focus_total_ms) = 5UL * 60000UL;
+            id(focus_end_ms) = millis() + id(focus_total_ms);
+            if (id(focus_end_ms) == 0) id(focus_end_ms) = 1;
+            id(force_redraw) = true;
+  - platform: template
+    name: "Stop Focus Timer"
+    id: stop_focus_btn
+    web_server: { sorting_group_id: grp_controls, sorting_weight: 66 }
+    on_press:
+      then:
+        - lambda: |-
+            id(focus_end_ms) = 0;
+            id(focus_rem_01) = -1.0f;
+            id(force_redraw) = true;
   - platform: restart
     name: "Restart Clock"
     web_server: { sorting_group_id: grp_diag, sorting_weight: 90 }
@@ -247,6 +354,15 @@ switch:
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
     web_server: { sorting_group_id: grp_schedule, sorting_weight: 43 }
+    on_turn_on:  { then: [ lambda: 'id(force_redraw) = true;', script.execute: save_prefs_debounced ] }
+    on_turn_off: { then: [ lambda: 'id(force_redraw) = true;', script.execute: save_prefs_debounced ] }
+
+  - platform: template
+    id: cfg_late_bed_en
+    name: "Enable Non-School Night Late Bedtime"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    web_server: { sorting_group_id: grp_schedule, sorting_weight: 45 }
     on_turn_on:  { then: [ lambda: 'id(force_redraw) = true;', script.execute: save_prefs_debounced ] }
     on_turn_off: { then: [ lambda: 'id(force_redraw) = true;', script.execute: save_prefs_debounced ] }
 
@@ -404,6 +520,16 @@ datetime:
     on_value: { then: [ lambda: 'id(force_redraw) = true;', script.execute: save_prefs_debounced ] }
 
   - platform: template
+    id: cfg_school_leave_time
+    name: "Leave for School Time"
+    type: time
+    optimistic: true
+    restore_value: true
+    initial_value: "08:30:00"
+    web_server: { sorting_group_id: grp_calendar, sorting_weight: 28 }
+    on_value: { then: [ lambda: 'id(force_redraw) = true;', script.execute: save_prefs_debounced ] }
+
+  - platform: template
     id: cfg_countdown_date
     name: "Custom Countdown Date"
     type: date
@@ -440,6 +566,20 @@ number:
     restore_value: true
     initial_value: 60
     web_server: { sorting_group_id: grp_schedule, sorting_weight: 44 }
+    on_value: { then: [ lambda: 'id(force_redraw) = true;', script.execute: save_prefs_debounced ] }
+
+  - platform: template
+    id: cfg_late_bed_offset
+    name: "Non-School Night Late Bedtime Offset"
+    mode: slider
+    min_value: 0
+    max_value: 90
+    step: 5
+    unit_of_measurement: "min"
+    optimistic: true
+    restore_value: true
+    initial_value: 30
+    web_server: { sorting_group_id: grp_schedule, sorting_weight: 45 }
     on_value: { then: [ lambda: 'id(force_redraw) = true;', script.execute: save_prefs_debounced ] }
   - platform: template
     id: cfg_lat
@@ -877,6 +1017,8 @@ interval:
               got_iss = true;
             }
             if (t.cal_dirty) {
+              id(fam_cal_summary) = t.family_cal;
+              id(sch_cal_summary) = t.school_cal;
               id(cal_today_event) = t.family_cal.today_title;
               id(cal_tomorrow_event) = t.family_cal.tomorrow_title;
               id(cal_next_event) = t.family_cal.next_title;
@@ -933,6 +1075,12 @@ interval:
           id(use_miles) = id(cfg_use_miles).state;
           id(show_night_lights) = id(cfg_night_lights).state;
           id(keep_santa_winddown) = id(cfg_santa_winddown).state;
+          std::string cp_opt = id(cfg_cal_priority).current_option();
+          id(cal_priority_mode) = (cp_opt == "Today & Routine First") ? 1 : ((cp_opt == "Countdowns First") ? 2 : 0);
+          std::string cs_opt = id(cfg_cal_style).current_option();
+          id(cal_display_style) = (cs_opt == "Prominent Dock Card") ? 1 : ((cs_opt == "Morning Launchpad Takeover") ? 2 : 0);
+          id(minimal_teen_mode) = (id(cfg_age_profile).current_option() == "Teen & Study Desk (12+)");
+          id(school_leave_min) = (int)id(cfg_school_leave_time).hour * 60 + (int)id(cfg_school_leave_time).minute;
 
           // 3. Rollover-Safe Boot Splash State Machine (Connecting -> AP Ready -> SNTP -> Info Hold -> Live)
           bool wifi_ok = id(wifi_conn).is_connected();
@@ -1074,18 +1222,20 @@ interval:
           id(msg_xmas_title_resolved)     = resolve_msg(id(cfg_msg_xmas_title).state, "MERRY CHRISTMAS!");
           id(msg_xmas_sub_resolved)       = resolve_msg(id(cfg_msg_xmas_sub).state, "Time for presents, {name}!");
 
-          // 5. 4-Phase Schedule (with Weekend/Holiday Lie-In, Nap & Wind-Down Overrides, Stars & Occasions)
+          // 5. 4-Phase Schedule (Symmetric School-Night Bedtime + Weekend/Holiday Lie-In + Focus Pomodoro + Launchpad)
           world_clock::ScheduleConfig scfg;
           scfg.winddown_enabled = id(cfg_winddown_en).state;
           scfg.sleep_enabled = id(cfg_sleep_en).state;
           scfg.quiet_enabled = id(cfg_quiet_en).state;
           scfg.weekend_liein_enabled = id(cfg_weekend_en).state;
+          scfg.non_school_bedtime_enabled = id(cfg_late_bed_en).state;
           scfg.winddown_m = (int)id(cfg_winddown_time).hour * 60 + (int)id(cfg_winddown_time).minute;
           scfg.bedtime_m  = (int)id(cfg_bedtime).hour       * 60 + (int)id(cfg_bedtime).minute;
           scfg.quiet_m    = (int)id(cfg_quiet_time).hour    * 60 + (int)id(cfg_quiet_time).minute;
           scfg.wakeup_m   = (int)id(cfg_wakeup_time).hour   * 60 + (int)id(cfg_wakeup_time).minute;
           scfg.special_delay_m = (int)roundf(std::isnan(id(cfg_special_delay).state) ? 0.0f : id(cfg_special_delay).state);
           scfg.weekend_offset_m = (int)roundf(std::isnan(id(cfg_weekend_offset).state) ? 0.0f : id(cfg_weekend_offset).state);
+          scfg.non_school_bedtime_m = (int)roundf(std::isnan(id(cfg_late_bed_offset).state) ? 0.0f : id(cfg_late_bed_offset).state);
 
           // Auto-clear Parent Note at midnight & Tooth Fairy at noon next day
           if (now.is_valid()) {
@@ -1108,17 +1258,34 @@ interval:
             id(force_redraw) = true;
           }
 
+          // Check Focus Pomodoro expiration & live countdown update
+          static int s_last_focus_stars = -1;
+          if (id(focus_end_ms) != 0 && (int32_t)(now_ms - id(focus_end_ms)) >= 0) {
+            id(focus_end_ms) = 0;
+            id(focus_rem_01) = -1.0f;
+            s_last_focus_stars = -1;
+            id(force_redraw) = true;
+          }
+
           int dow_now = now.is_valid() ? world_clock::ymd_dow_num(now.year, now.month, now.day_of_month) : 1;
           bool is_weekend = (dow_now == 0 || dow_now == 6);
-          bool is_lie_in_day = is_weekend || (id(cfg_holiday_liein_en).state && id(cal_school_holiday));
+          bool is_today_non_school = is_weekend || (id(cfg_holiday_liein_en).state && id(cal_school_holiday));
+          bool is_tmrw_hol = id(sch_cal_summary).tomorrow_is_school_holiday || id(fam_cal_summary).tomorrow_is_school_holiday;
+          bool is_tomorrow_non_school = (dow_now == 5 || dow_now == 6) || (id(cfg_holiday_liein_en).state && is_tmrw_hol);
+          bool is_special_night = now.is_valid() && (((now.month == 12 && (now.day_of_month == 24 || now.day_of_month == 31)) || (now.month == 11 && now.day_of_month == 5)));
 
-          // Update dynamic token times with effective quiet/wake times on weekend/holiday lie-in days
-          int eff_q = world_clock::effective_quiet_m(scfg, is_lie_in_day);
-          int eff_w = world_clock::effective_wakeup_m(scfg, is_lie_in_day);
-          tctx.quiet  = world_clock::format_short_time(eff_q / 60, eff_q % 60, use24);
-          tctx.wakeup = world_clock::format_short_time(eff_w / 60, eff_w % 60, use24);
-          id(msg_sleep_title_resolved) = resolve_msg(id(cfg_msg_sleep_title).state, "BEFORE {quiet} · SLEEP TIME");
-          id(msg_quiet_title_resolved) = resolve_msg(id(cfg_msg_quiet_title).state, "PAST {quiet} · OK TO GET UP");
+          // Update dynamic token times with effective school-night / non-school-night / lie-in times
+          int eff_wd  = world_clock::effective_winddown_m(scfg, is_special_night, is_tomorrow_non_school);
+          int eff_bed = world_clock::effective_bedtime_m(scfg, is_special_night, is_tomorrow_non_school);
+          int eff_q   = world_clock::effective_quiet_m(scfg, is_today_non_school);
+          int eff_w   = world_clock::effective_wakeup_m(scfg, is_today_non_school);
+          tctx.winddown = world_clock::format_short_time(eff_wd / 60, eff_wd % 60, use24);
+          tctx.bedtime  = world_clock::format_short_time(eff_bed / 60, eff_bed % 60, use24);
+          tctx.quiet    = world_clock::format_short_time(eff_q / 60, eff_q % 60, use24);
+          tctx.wakeup   = world_clock::format_short_time(eff_w / 60, eff_w % 60, use24);
+          id(msg_winddown_sub_resolved) = resolve_msg(id(cfg_msg_winddown_sub).state, "PJs, teeth & story · Bed {bedtime}");
+          id(msg_sleep_title_resolved)  = resolve_msg(id(cfg_msg_sleep_title).state, "BEFORE {quiet} · SLEEP TIME");
+          id(msg_quiet_title_resolved)  = resolve_msg(id(cfg_msg_quiet_title).state, "PAST {quiet} · OK TO GET UP");
 
           int b_mon = (id(cfg_birthdate).month >= 1) ? (int)id(cfg_birthdate).month : 1;
           int b_day = (id(cfg_birthdate).day >= 1)   ? (int)id(cfg_birthdate).day   : 1;
@@ -1134,6 +1301,8 @@ interval:
             slp = 2; mode = 0;
           } else if (sel == "Wind-Down Preview (Amber)") {
             slp = 3; mode = (now.is_valid() && now.month == 12 && now.day_of_month == 24) ? 4 : 0; rem_stars = 0.75f;
+          } else if (sel == "Morning Launchpad Preview" || sel == "No-School Holiday Preview" || sel == "Focus Study Timer Preview") {
+            slp = 0; mode = id(cfg_iss_en).state ? 1 : 0;
           } else if (sel != "Auto") {
             slp = 0;
             if (sel == "Classic Map") mode = 0;
@@ -1148,9 +1317,8 @@ interval:
             else if (sel == "Star Wars Day") mode = 8;
           } else if (now.is_valid()) {
             int m = now.month, d = now.day_of_month, yr = now.year;
-            bool is_special_night = (m == 12 && (d == 24 || d == 31)) || (m == 11 && d == 5);
             int cur_min = now.hour * 60 + now.minute;
-            slp = world_clock::evaluate_schedule(cur_min, scfg, is_special_night, is_lie_in_day);
+            slp = world_clock::evaluate_schedule(cur_min, scfg, is_special_night, is_today_non_school, is_tomorrow_non_school);
 
             if (id(nap_end_ms) != 0) {
               slp = 1;
@@ -1162,12 +1330,12 @@ interval:
                 else if (slp == 1) id(winddown_override_yday) = -1;
               }
               if (slp == 1 || slp == 3) {
-                rem_stars = world_clock::sleep_phase_remaining_01(cur_min, slp, scfg, is_special_night, is_lie_in_day);
+                rem_stars = world_clock::sleep_phase_remaining_01(cur_min, slp, scfg, is_special_night, is_today_non_school, is_tomorrow_non_school);
               }
             }
 
-            bool hol_en = id(cfg_holidays_en).state;
-            if (m == b_mon && d == b_day) mode = 2;
+            bool hol_en = id(cfg_holidays_en).state && !id(minimal_teen_mode);
+            if (!id(minimal_teen_mode) && m == b_mon && d == b_day) mode = 2;
             else if (hol_en && m == 12 && d == 25) mode = 9;
             else if (hol_en && m == 12 && d == 24) mode = 4;
             else if (hol_en && m == 12 && d < 24) mode = 3;
@@ -1178,6 +1346,38 @@ interval:
             else mode = id(cfg_iss_en).state ? 1 : 0;
           }
           id(sleep_remaining_01) = id(cfg_sleep_stars_en).state ? rem_stars : -1.0f;
+
+          // Focus Pomodoro state (live timer OR Focus Study Timer Preview)
+          if (id(focus_end_ms) != 0) {
+            uint32_t rem_ms = (uint32_t)(id(focus_end_ms) - now_ms);
+            int rem_s = (int)(rem_ms / 1000UL);
+            char ft[40];
+            snprintf(ft, sizeof(ft), "%s · %02d:%02d LEFT", id(focus_is_break) ? "BREAK TIME" : "FOCUS STUDY", rem_s / 60, rem_s % 60);
+            id(focus_title) = ft;
+            id(focus_sub) = id(focus_is_break) ? "Stretch & recharge · Back soon!" : "Stay in flow · 5m break next";
+            id(focus_rem_01) = (id(focus_total_ms) > 0) ? std::clamp((float)rem_ms / (float)id(focus_total_ms), 0.0f, 1.0f) : 0.5f;
+            int stars_now = (int)ceilf(id(focus_rem_01) * 5.0f);
+            if (stars_now != s_last_focus_stars) { s_last_focus_stars = stars_now; id(force_redraw) = true; }
+          } else if (sel == "Focus Study Timer Preview") {
+            id(focus_is_break) = false;
+            id(focus_title) = "FOCUS STUDY · 24:35 LEFT";
+            id(focus_sub) = "Stay in flow · 5m break next";
+            id(focus_rem_01) = 0.85f;
+            if (s_last_focus_stars != 99) { s_last_focus_stars = 99; id(force_redraw) = true; }
+          } else {
+            if (id(focus_rem_01) >= 0.0f) { id(focus_rem_01) = -1.0f; s_last_focus_stars = -1; id(force_redraw) = true; }
+          }
+
+          // Morning Launchpad Takeover activation (during morning window OR preview)
+          int now_m_lp = now.is_valid() ? (now.hour * 60 + now.minute) : -1;
+          int lp_end_m = id(school_leave_min) + 5;
+          bool auto_lp = (id(cal_display_style) == 2) && (slp == 0) && (mode <= 1 || mode == 3) &&
+                         now.is_valid() && (now_m_lp >= 405 && now_m_lp <= lp_end_m);
+          bool want_lp = auto_lp || (sel == "Morning Launchpad Preview") || (sel == "No-School Holiday Preview");
+          if (want_lp != id(launchpad_visible)) {
+            id(launchpad_visible) = want_lp;
+            if (!want_lp) id(badge_mode_applied) = 255;
+          }
 
           uint8_t pal = (slp == 1) ? 1 : ((slp == 2 || slp == 3) ? 2 : 0);
           bool mode_changed = (slp != id(sleep_phase)) || (mode != id(active_occasion));
@@ -1322,12 +1522,31 @@ interval:
             lv_obj_align_to(id(loc_pill), id(date_label), LV_ALIGN_OUT_RIGHT_MID, 10, 0);
           }
 
+          world_clock::ScheduleConfig scfg_t;
+          scfg_t.weekend_liein_enabled = id(cfg_weekend_en).state;
+          scfg_t.non_school_bedtime_enabled = id(cfg_late_bed_en).state;
+          scfg_t.winddown_m = (int)id(cfg_winddown_time).hour * 60 + (int)id(cfg_winddown_time).minute;
+          scfg_t.bedtime_m  = (int)id(cfg_bedtime).hour       * 60 + (int)id(cfg_bedtime).minute;
+          scfg_t.quiet_m    = (int)id(cfg_quiet_time).hour    * 60 + (int)id(cfg_quiet_time).minute;
+          scfg_t.wakeup_m   = (int)id(cfg_wakeup_time).hour   * 60 + (int)id(cfg_wakeup_time).minute;
+          scfg_t.special_delay_m = (int)roundf(std::isnan(id(cfg_special_delay).state) ? 0.0f : id(cfg_special_delay).state);
+          scfg_t.weekend_offset_m = (int)roundf(std::isnan(id(cfg_weekend_offset).state) ? 0.0f : id(cfg_weekend_offset).state);
+          scfg_t.non_school_bedtime_m = (int)roundf(std::isnan(id(cfg_late_bed_offset).state) ? 0.0f : id(cfg_late_bed_offset).state);
+          int dow_t = now.is_valid() ? world_clock::ymd_dow_num(now.year, now.month, now.day_of_month) : 1;
+          bool is_wknd = (dow_t == 0 || dow_t == 6);
+          bool is_today_ns_t = is_wknd || (id(cfg_holiday_liein_en).state && id(cal_school_holiday));
+          bool is_tmrw_ns_t = (dow_t == 5 || dow_t == 6) || (id(cfg_holiday_liein_en).state && (id(sch_cal_summary).tomorrow_is_school_holiday || id(fam_cal_summary).tomorrow_is_school_holiday));
+          bool is_spec_t = now.is_valid() && (((now.month == 12 && (now.day_of_month == 24 || now.day_of_month == 31)) || (now.month == 11 && now.day_of_month == 5)));
+          int ew_t = world_clock::effective_winddown_m(scfg_t, is_spec_t, is_tmrw_ns_t);
+          int eb_t = world_clock::effective_bedtime_m(scfg_t, is_spec_t, is_tmrw_ns_t);
+          int eq_t = world_clock::effective_quiet_m(scfg_t, is_today_ns_t);
+          int eu_t = world_clock::effective_wakeup_m(scfg_t, is_today_ns_t);
           world_clock::TokenContext tctx{
               cname,
-              world_clock::format_short_time((int)id(cfg_winddown_time).hour, (int)id(cfg_winddown_time).minute, use24),
-              world_clock::format_short_time((int)id(cfg_bedtime).hour, (int)id(cfg_bedtime).minute, use24),
-              world_clock::format_short_time((int)id(cfg_quiet_time).hour, (int)id(cfg_quiet_time).minute, use24),
-              world_clock::format_short_time((int)id(cfg_wakeup_time).hour, (int)id(cfg_wakeup_time).minute, use24),
+              world_clock::format_short_time(ew_t / 60, ew_t % 60, use24),
+              world_clock::format_short_time(eb_t / 60, eb_t % 60, use24),
+              world_clock::format_short_time(eq_t / 60, eq_t % 60, use24),
+              world_clock::format_short_time(eu_t / 60, eu_t % 60, use24),
           };
           auto resolve_msg = [&](const std::string &raw, const char *fallback) -> std::string {
             return world_clock::expand_tokens(raw.empty() ? fallback : raw, tctx);
@@ -1337,60 +1556,49 @@ interval:
           uint8_t m = id(active_occasion);
           int b_mon = (id(cfg_birthdate).month >= 1) ? (int)id(cfg_birthdate).month : 1;
           int b_day = (id(cfg_birthdate).day >= 1)   ? (int)id(cfg_birthdate).day   : 1;
-          int wake_m = (int)id(cfg_wakeup_time).hour * 60 + (int)id(cfg_wakeup_time).minute;
-          int dow_t = now.is_valid() ? world_clock::ymd_dow_num(now.year, now.month, now.day_of_month) : 1;
-          bool is_wknd = (dow_t == 0 || dow_t == 6);
+          int wake_m = eu_t;
           bool alt_slot = now.is_valid() && (((now.second / 12) % 2) == 0);
           std::string tick = "CLASSIC WORLD DAY/NIGHT MAP";
 
-          // Build calm routine / calendar / countdown headline for daytime & evening predictability
+          // Build calm routine / calendar / countdown headline + Prominent Dock Card via multi-event priority engine
+          int now_m_cv = now.is_valid() ? (now.hour * 60 + now.minute) : 480;
+          int custom_cd_days = -1;
+          if (now.is_valid() && !id(cfg_countdown_name).state.empty() && id(cfg_countdown_date).year > 2020) {
+            custom_cd_days = world_clock::days_between_ymd(now.year, now.month, now.day_of_month,
+                                                           (int)id(cfg_countdown_date).year,
+                                                           (int)id(cfg_countdown_date).month,
+                                                           (int)id(cfg_countdown_date).day);
+          }
+          auto cv = world_clock::build_calendar_view(
+              id(fam_cal_summary), id(sch_cal_summary),
+              id(cal_school_configured), is_wknd, now_m_cv,
+              id(cal_priority_mode), (now.is_valid() ? now.second / 12 : 0),
+              use24, id(cfg_countdown_name).state, custom_cd_days);
+
+          bool want_prom = (id(cal_display_style) == 1) && (slp == 0) && (id(focus_rem_01) < 0.0f) &&
+                           (!cv.dock_title.empty() || !id(parent_note_text).empty());
+          if (want_prom != id(cal_prominent_active)) {
+            id(cal_prominent_active) = want_prom;
+            id(force_redraw) = true;
+          }
+          if (want_prom) {
+            id(cal_prominent_title) = !id(parent_note_text).empty() ? "PARENT NOTE" : cv.dock_title;
+            id(cal_prominent_sub)   = !id(parent_note_text).empty() ? id(parent_note_text) : cv.dock_sub;
+          }
+
           std::string routine_line;
           if (!id(parent_note_text).empty()) {
             routine_line = "NOTE  \u2192  " + world_clock::to_upper_ascii(id(parent_note_text));
-          } else if (now.is_valid()) {
-            std::string sch_tag;
-            if (id(cal_school_configured)) {
-              if (id(cal_school_holiday)) {
-                sch_tag = id(cal_school_note).empty() ? "NO SCHOOL (HOLIDAY)" : ("NO SCHOOL · " + world_clock::to_upper_ascii(id(cal_school_note)));
-              } else if (is_wknd) {
-                sch_tag = "WEEKEND · NO SCHOOL";
-              } else {
-                sch_tag = "SCHOOL DAY";
-              }
-            }
-            if (!id(cal_today_event).empty()) {
-              std::string ev = world_clock::to_upper_ascii(id(cal_today_event));
-              routine_line = sch_tag.empty() ? ("TODAY  \u2192  " + ev) : (sch_tag + " · " + ev);
-            } else if (!sch_tag.empty() && now.hour < 15) {
-              routine_line = sch_tag;
-            } else if (!id(cal_tomorrow_event).empty() && now.hour >= 15) {
-              routine_line = "TOMORROW  \u2192  " + world_clock::to_upper_ascii(id(cal_tomorrow_event));
-            } else if (!id(cfg_countdown_name).state.empty() && id(cfg_countdown_date).year > 2020) {
-              int cd_days = world_clock::days_between_ymd(now.year, now.month, now.day_of_month,
-                                                          (int)id(cfg_countdown_date).year,
-                                                          (int)id(cfg_countdown_date).month,
-                                                          (int)id(cfg_countdown_date).day);
-              std::string evn = world_clock::to_upper_ascii(id(cfg_countdown_name).state);
-              if (cd_days == 0) routine_line = "TODAY IS " + evn + "!";
-              else if (cd_days > 0 && cd_days <= 60) {
-                char cdb[64];
-                snprintf(cdb, sizeof(cdb), "%d %s TO %s!", cd_days, (cd_days == 1) ? "SLEEP" : "SLEEPS", evn.c_str());
-                routine_line = cdb;
-              }
-            } else if (id(cal_next_days) >= 2 && id(cal_next_days) <= 30 && !id(cal_next_event).empty()) {
-              char cdb[64];
-              snprintf(cdb, sizeof(cdb), "%d SLEEPS TO %s!", id(cal_next_days),
-                       world_clock::to_upper_ascii(id(cal_next_event)).c_str());
-              routine_line = cdb;
-            } else if (id(cfg_holidays_en).state) {
-              if (world_clock::is_pancake_day(now.year, now.month, now.day_of_month)) routine_line = "HAPPY PANCAKE DAY!";
-              else if (world_clock::is_uk_mothers_day(now.year, now.month, now.day_of_month)) routine_line = "HAPPY MOTHER'S DAY!";
-              else if (world_clock::is_fathers_day(now.year, now.month, now.day_of_month)) routine_line = "HAPPY FATHER'S DAY!";
-              else if (world_clock::is_world_book_day(now.year, now.month, now.day_of_month)) routine_line = "HAPPY WORLD BOOK DAY!";
-              else if (world_clock::is_meteor_shower(now.month, now.day_of_month)) routine_line = "METEOR SHOWER TONIGHT · WATCH THE SKY!";
-              else if (world_clock::solstice_kind(now.month, now.day_of_month) == 1) routine_line = "SUMMER SOLSTICE · LONGEST DAY OF THE YEAR!";
-              else if (world_clock::solstice_kind(now.month, now.day_of_month) == 2) routine_line = "WINTER SOLSTICE · SHORTEST DAY OF THE YEAR!";
-            }
+          } else if (!cv.headline.empty()) {
+            routine_line = cv.headline;
+          } else if (now.is_valid() && id(cfg_holidays_en).state && !id(minimal_teen_mode)) {
+            if (world_clock::is_pancake_day(now.year, now.month, now.day_of_month)) routine_line = "HAPPY PANCAKE DAY!";
+            else if (world_clock::is_uk_mothers_day(now.year, now.month, now.day_of_month)) routine_line = "HAPPY MOTHER'S DAY!";
+            else if (world_clock::is_fathers_day(now.year, now.month, now.day_of_month)) routine_line = "HAPPY FATHER'S DAY!";
+            else if (world_clock::is_world_book_day(now.year, now.month, now.day_of_month)) routine_line = "HAPPY WORLD BOOK DAY!";
+            else if (world_clock::is_meteor_shower(now.month, now.day_of_month)) routine_line = "METEOR SHOWER TONIGHT · WATCH THE SKY!";
+            else if (world_clock::solstice_kind(now.month, now.day_of_month) == 1) routine_line = "SUMMER SOLSTICE · LONGEST DAY OF THE YEAR!";
+            else if (world_clock::solstice_kind(now.month, now.day_of_month) == 2) routine_line = "WINTER SOLSTICE · SHORTEST DAY OF THE YEAR!";
           }
 
           if (slp == 1) {
@@ -1493,4 +1701,5 @@ interval:
           world_clock::utf8_truncate_codepoints(tick, 44);
           lv_label_set_text(id(ticker_label), tick.c_str());
 
+      - script.execute: update_launchpad_ui
       - script.execute: update_dock_1hz

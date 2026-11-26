@@ -244,3 +244,166 @@ lvgl:
             radius: 0
             pad_all: 0
             scrollbar_mode: "OFF"
+
+        # Optional Morning Launchpad / Daily Routine Takeover Board (covers Band 2 during morning routine)
+        - obj:
+            id: launchpad_overlay
+            x: 0
+            y: 74
+            width: 800
+            height: 322
+            bg_color: 0x05070B
+            bg_opa: COVER
+            border_width: 0
+            radius: 0
+            pad_all: 0
+            hidden: true
+            scrollbar_mode: "OFF"
+            widgets:
+              - obj:
+                  id: lp_school_pill
+                  x: 24
+                  y: 16
+                  radius: 8
+                  bg_color: 0x0B3B3A
+                  bg_opa: COVER
+                  border_width: 1
+                  border_color: 0x14B8A6
+                  pad_left: 12
+                  pad_right: 12
+                  pad_top: 5
+                  pad_bottom: 5
+                  scrollbar_mode: "OFF"
+                  widgets:
+                    - label:
+                        id: lp_school_lbl
+                        align: CENTER
+                        text: "SCHOOL DAY"
+                        text_font: font_fira_sm
+                        text_color: 0x5EEAD4
+              - label:
+                  id: lp_countdown_lbl
+                  align: TOP_RIGHT
+                  x: -24
+                  y: 20
+                  text: "LEAVE FOR SCHOOL IN 22 MIN"
+                  text_font: font_date
+                  text_color: 0xFFF6EA
+              - bar:
+                  id: lp_countdown_bar
+                  x: 24
+                  y: 62
+                  width: 752
+                  height: 10
+                  min_value: 0
+                  max_value: 100
+                  value: 65
+                  radius: 5
+                  bg_color: 0x151B26
+                  bg_opa: COVER
+                  indicator:
+                    bg_color: 0x14B8A6
+                    bg_opa: COVER
+                    radius: 5
+              - obj:
+                  id: lp_left_card
+                  x: 24
+                  y: 88
+                  width: 368
+                  height: 214
+                  radius: 14
+                  bg_color: 0x0C1018
+                  bg_opa: COVER
+                  border_width: 1
+                  border_color: 0x1F2937
+                  pad_all: 0
+                  scrollbar_mode: "OFF"
+                  widgets:
+                    - label:
+                        id: lp_left_kicker
+                        x: 18
+                        y: 14
+                        text: "TODAY'S PLAN & ROUTINE"
+                        text_font: font_fira_xs
+                        text_color: 0xFF9F1C
+                    - label:
+                        id: lp_plan_1
+                        x: 18
+                        y: 48
+                        width: 332
+                        text: "• PE Kit & Trainers"
+                        text_font: font_card_title
+                        text_color: 0xFFF6EA
+                    - label:
+                        id: lp_plan_2
+                        x: 18
+                        y: 96
+                        width: 332
+                        text: "• Swimming Lesson (4 PM)"
+                        text_font: font_card_sub
+                        text_color: 0xD4D4D8
+                    - label:
+                        id: lp_plan_3
+                        x: 18
+                        y: 144
+                        width: 332
+                        text: "• Tomorrow: Non-Uniform Day"
+                        text_font: font_card_sub
+                        text_color: 0x9CA3AF
+              - obj:
+                  id: lp_right_card
+                  x: 408
+                  y: 88
+                  width: 368
+                  height: 214
+                  radius: 14
+                  bg_color: 0x0C1018
+                  bg_opa: COVER
+                  border_width: 1
+                  border_color: 0x1F2937
+                  pad_all: 0
+                  scrollbar_mode: "OFF"
+                  widgets:
+                    - label:
+                        id: lp_right_kicker
+                        x: 18
+                        y: 14
+                        text: "WEATHER PREP & COUNTDOWN"
+                        text_font: font_fira_xs
+                        text_color: 0x38BDF8
+                    - label:
+                        id: lp_wx_summary
+                        x: 18
+                        y: 48
+                        width: 332
+                        text: "8°C · Rainy · Feels 6°"
+                        text_font: font_card_title
+                        text_color: 0xFFF6EA
+                    - label:
+                        id: lp_wx_prep
+                        x: 18
+                        y: 92
+                        width: 332
+                        text: "Warm Raincoat & Umbrella"
+                        text_font: font_card_sub
+                        text_color: 0x93C5FD
+                    - obj:
+                        id: lp_holiday_pill
+                        x: 18
+                        y: 146
+                        width: 332
+                        height: 44
+                        radius: 8
+                        bg_color: 0x1C1406
+                        bg_opa: COVER
+                        border_width: 1
+                        border_color: 0xB45309
+                        pad_all: 0
+                        scrollbar_mode: "OFF"
+                        widgets:
+                          - label:
+                              id: lp_holiday_lbl
+                              align: CENTER
+                              text: "8 SLEEPS TO HALF TERM!"
+                              text_font: font_fira_sm
+                              text_color: 0xFCD34D

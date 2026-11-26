@@ -43,16 +43,17 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install system tools (ImageMagick & FFmpeg)
+      - name: Install system tools (Ninja, ImageMagick & FFmpeg)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends imagemagick ffmpeg
+          sudo apt-get install -y --no-install-recommends ninja-build imagemagick ffmpeg
 
       - name: Cache PlatformIO & ESP-IDF toolchains
         uses: actions/cache@v4
         with:
           path: |
             ~/.platformio
+            ~/.esphome
             ~/.cache/pip
           key: esphome-release-${{ env.ESPHOME_VERSION }}-${{ hashFiles('packages/*.yaml', 'components/world_clock/*') }}
           restore-keys: |
@@ -64,6 +65,8 @@ jobs:
       - name: Stage release credentials (Captive Portal AP & default Web UI login)
         run: |
           cat > examples/secrets.yaml <<'EOF'
+          wifi_ssid: "unused"
+          wifi_password: "unused"
           ap_password: "ClockSetup123"
           web_auth_user: "parent"
           web_auth_pass: "ClockSetup123"
@@ -72,16 +75,19 @@ jobs:
       - name: Compile universal standalone ESP32-S3 firmware
         run: esphome compile examples/world-clock-standalone-release.yaml
 
-      - name: Run headless emulator for release media (17 PNGs + 11 x 30s MP4 videos)
+      - name: Run headless emulator for release media (PNGs + 30s MP4 videos)
         run: python3 scripts/run_emulator.py --out sim_output --video-seconds 30
 
       - name: Package release assets
         run: |
           TAG="${{ steps.meta.outputs.tag }}"
           mkdir -p release_assets
-          BUILD_DIR="examples/.esphome/build/world-clock/.pioenvs/world-clock"
-          cp "${BUILD_DIR}/firmware.ota.bin" "release_assets/world-clock-standalone-${TAG}-ota.bin"
-          cp "${BUILD_DIR}/firmware.factory.bin" "release_assets/world-clock-standalone-${TAG}-factory.bin"
+          OTA_BIN=$(find examples/.esphome/build/world-clock -name "firmware.ota.bin" | head -n 1)
+          FAC_BIN=$(find examples/.esphome/build/world-clock -name "firmware.factory.bin" | head -n 1)
+          echo "Found OTA: ${OTA_BIN}"
+          echo "Found Factory: ${FAC_BIN}"
+          test -n "${OTA_BIN}" && cp "${OTA_BIN}" "release_assets/world-clock-standalone-${TAG}-ota.bin"
+          test -n "${FAC_BIN}" && cp "${FAC_BIN}" "release_assets/world-clock-standalone-${TAG}-factory.bin"
           cp sim_output/overview_gallery.png "release_assets/overview_gallery.png"
           if [ -f sim_output/demo_reel.mp4 ]; then
             cp sim_output/demo_reel.mp4 "release_assets/demo_reel.mp4"

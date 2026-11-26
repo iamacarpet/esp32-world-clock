@@ -154,6 +154,14 @@ script:
           p.sleep_remaining_01 = id(sleep_remaining_01);
           p.tooth_fairy_mode   = id(tooth_fairy_active);
           p.nap_active         = (id(nap_end_ms) != 0);
+          p.prominent_cal_active = id(cal_prominent_active);
+          p.prominent_cal_title  = id(cal_prominent_title);
+          p.prominent_cal_sub    = id(cal_prominent_sub);
+          p.focus_active         = (id(focus_rem_01) >= 0.0f);
+          p.focus_is_break       = id(focus_is_break);
+          p.focus_remaining_01   = id(focus_rem_01);
+          p.focus_title          = id(focus_title);
+          p.focus_sub            = id(focus_sub);
 
           world_clock::render_weather_dock_canvas(w, id(bg_cache), p);
 
@@ -208,8 +216,14 @@ script:
           uint8_t m = id(active_occasion);
           bool age_ok = id(cur_wx_age_ok);
 
-          // Keep Santa dock card locked at 1Hz with top ticker during Day or Xmas Eve Wind-Down
-          if (m == 4 && (slp == 0 || (slp == 3 && id(keep_santa_winddown)))) {
+          // Keep Focus Pomodoro / Prominent Calendar / Santa dock cards live at 1Hz
+          if (slp == 0 && id(focus_rem_01) >= 0.0f) {
+            lv_label_set_text(id(dock_card_title), id(focus_title).c_str());
+            lv_label_set_text(id(dock_card_sub), id(focus_sub).c_str());
+          } else if (slp == 0 && id(cal_prominent_active) && (m == 0 || m == 1 || m == 3)) {
+            if (!id(cal_prominent_title).empty()) lv_label_set_text(id(dock_card_title), id(cal_prominent_title).c_str());
+            if (!id(cal_prominent_sub).empty()) lv_label_set_text(id(dock_card_sub), id(cal_prominent_sub).c_str());
+          } else if (m == 4 && (slp == 0 || (slp == 3 && id(keep_santa_winddown)))) {
             if (id(santa_wp_idx) < 0) {
               lv_label_set_text(id(dock_card_title), (slp == 3) ? "SANTA PREP · BEDTIME SOON!" : "SANTA PREP · NORTH POLE");
               lv_label_set_text(id(dock_card_sub), (slp == 3) ? id(msg_winddown_sub_resolved).c_str() : "Elves loading sleigh · Liftoff 10am!");

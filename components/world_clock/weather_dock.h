@@ -45,6 +45,16 @@ struct WeatherDockParams {
   float sleep_remaining_01{-1.0f};  // 0..1 remaining fraction -> draws 5 countdown stars
   bool tooth_fairy_mode{false};
   bool nap_active{false};
+  // Prominent Band 3 Calendar Card (when Calendar Display Style == Prominent Dock Card)
+  bool prominent_cal_active{false};
+  std::string prominent_cal_title;
+  std::string prominent_cal_sub;
+  // Teen / Study Desk Focus Pomodoro Timer (takes over right Band 3 card when active)
+  bool focus_active{false};
+  bool focus_is_break{false};
+  float focus_remaining_01{-1.0f};
+  std::string focus_title;
+  std::string focus_sub;
 };
 
 inline int map_wx_code(std::string s) {
@@ -130,7 +140,8 @@ inline void render_weather_dock_canvas(const WeatherDockWidgets &w, uint8_t *&bg
   const uint8_t slp = p.sleep_phase;
   const uint8_t mode = p.mode;
   const bool show_card =
-      (slp != 0) || (mode == 2 || mode == 4 || mode == 5 || mode == 6 || mode == 7 || mode == 8 || mode == 9);
+      (slp != 0) || (mode == 2 || mode == 4 || mode == 5 || mode == 6 || mode == 7 || mode == 8 || mode == 9) ||
+      p.focus_active || p.prominent_cal_active;
 
   for (int i = 0; i < 3; i++) {
     set_hidden(w.fc_day[i], show_card);
@@ -406,6 +417,18 @@ inline void render_weather_dock_canvas(const WeatherDockWidgets &w, uint8_t *&bg
         if (w.card_sub != nullptr) lv_label_set_text(w.card_sub, p.winddown_sub.c_str());
       }
       draw_countdown_stars(p.sleep_remaining_01, 255, 165, 38, 65, 32, 8);
+    } else if (p.focus_active) {
+      // Teen / Study Desk Focus Pomodoro Timer Card (teal study vs green break)
+      uint8_t ar = p.focus_is_break ? 34 : 20, ag = p.focus_is_break ? 197 : 184, ab = p.focus_is_break ? 94 : 166;
+      pad_disc(32.0f, 32.0f, 18.0f, (float)ar, (float)ag, (float)ab, 0.20f);
+      pad_disc(32.0f, 32.0f, 13.5f, (float)ar, (float)ag, (float)ab, 1.0f);
+      pad_disc(32.0f, 32.0f, 10.5f, 0.0f, 0.0f, 0.0f, 1.0f);
+      pad_box(31, 23, 33, 33, ar, ag, ab);
+      pad_box(32, 31, 40, 33, ar, ag, ab);
+      pad_box(27, 15, 37, 18, ar, ag, ab);
+      if (w.card_title != nullptr) lv_label_set_text(w.card_title, p.focus_title.c_str());
+      if (w.card_sub != nullptr) lv_label_set_text(w.card_sub, p.focus_sub.c_str());
+      draw_countdown_stars(p.focus_remaining_01, ar, ag, ab, 24, 34, 42);
     } else if (mode == 2) {
       pad_box(14, 38, 50, 52, 235, 135, 55);
       pad_box(14, 38, 50, 42, 255, 95, 155);
@@ -478,7 +501,7 @@ inline void render_weather_dock_canvas(const WeatherDockWidgets &w, uint8_t *&bg
       if (w.card_title != nullptr)
         lv_label_set_text(w.card_title, (p.loc_valid && p.loc_month == 11) ? "BONFIRE FIREWORKS!" : "HAPPY NEW YEAR!");
       if (w.card_sub != nullptr) lv_label_set_text(w.card_sub, "Rockets & starburst sky show!");
-    } else {
+    } else if (mode == 8) {
       pad_disc(24.0f, 26.0f, 9.5f, 255.0f, 205.0f, 70.0f, 1.0f);
       pad_disc(42.0f, 38.0f, 7.0f, 255.0f, 95.0f, 30.0f, 1.0f);
       pad_box(24, 34, 26, 48, 220, 230, 245);
@@ -487,6 +510,19 @@ inline void render_weather_dock_canvas(const WeatherDockWidgets &w, uint8_t *&bg
       if (w.card_title != nullptr) lv_label_set_text(w.card_title, "MAY THE 4TH BE WITH YOU");
       std::string sw_sub = std::string("Happy Star Wars Day, ") + p.child_name + "!";
       if (w.card_sub != nullptr) lv_label_set_text(w.card_sub, sw_sub.c_str());
+    } else {
+      // Prominent Calendar Card (Band 3 right side, replaces 3-day forecast during daytime)
+      pad_box(14, 14, 50, 52, 230, 238, 248);
+      pad_box(14, 14, 50, 25, 45, 178, 172);
+      pad_box(21, 10, 25, 19, 245, 248, 252);
+      pad_box(39, 10, 43, 19, 245, 248, 252);
+      pad_box(20, 31, 44, 34, 30, 44, 62);
+      pad_box(20, 38, 40, 41, 30, 44, 62);
+      pad_box(20, 45, 34, 48, 242, 165, 42);
+      if (w.card_title != nullptr)
+        lv_label_set_text(w.card_title, p.prominent_cal_title.empty() ? "TODAY'S PLAN" : p.prominent_cal_title.c_str());
+      if (w.card_sub != nullptr)
+        lv_label_set_text(w.card_sub, p.prominent_cal_sub.empty() ? "Check family calendar" : p.prominent_cal_sub.c_str());
     }
     flush_pad(432, 40);
   }
