@@ -16,7 +16,14 @@ font:
     id: font_splash_lg
     size: 26
     bpp: 4
-    glyphs: *fira_glyphs
+    glyphs: &fira_text_glyphs
+      - " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+      - "\u00A3\u00B0\u00B1\u00B7\u00D7"
+      - "ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ"
+      - "\u2190\u2191\u2192\u2193\u2194"
+      - "\u2236\u2237\u2248\u2260\u2261\u2264\u2265"
+      - "\u27F5\u27F6\u27F7\u27F8\u27F9\u27FA"
+      - "\uEE00\uEE01\uEE02\uEE03\uEE04\uEE05"
 
   - file: "https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/ttf/FiraCode-Bold.ttf"
     id: font_temp_hero
@@ -28,13 +35,13 @@ font:
     id: font_date
     size: 19
     bpp: 4
-    glyphs: *fira_glyphs
+    glyphs: *fira_text_glyphs
 
   - file: "https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/ttf/FiraCode-Bold.ttf"
     id: font_card_title
     size: 16
     bpp: 4
-    glyphs: *fira_glyphs
+    glyphs: *fira_text_glyphs
 
   - file: "https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/ttf/FiraCode-Bold.ttf"
     id: font_ampm
@@ -46,19 +53,19 @@ font:
     id: font_fira_sm
     size: 14
     bpp: 4
-    glyphs: *fira_glyphs
+    glyphs: *fira_text_glyphs
 
   - file: "https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/ttf/FiraCode-Medium.ttf"
     id: font_card_sub
     size: 13
     bpp: 4
-    glyphs: *fira_glyphs
+    glyphs: *fira_text_glyphs
 
   - file: "https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/ttf/FiraCode-Bold.ttf"
     id: font_fira_xs
     size: 12
     bpp: 4
-    glyphs: *fira_glyphs
+    glyphs: *fira_text_glyphs
 
   - file: "https://raw.githubusercontent.com/Templarian/MaterialDesign-Webfont/v7.4.47/fonts/materialdesignicons-webfont.ttf"
     id: font_icon_sm

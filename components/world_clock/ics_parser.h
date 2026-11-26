@@ -303,6 +303,40 @@ inline DayPrepBriefing build_day_prep_briefing(const std::string &cur_cond, cons
   return {hdr, "Light Layers · No Rain Due"};
 }
 
+// Parses Home Assistant's 3-day forecast sensor payload.
+// Supports both legacy 3-day strings ("FRI,cloudy,11,6|SAT,rainy,10,4|SUN,sunny,13,7")
+// and v1.3.1+ payloads with an optional leading today-prep segment:
+// "TODAY,rainy,80|FRI,cloudy,11,6|SAT,rainy,10,4|SUN,sunny,13,7"
+// so HA clocks unlock "Dry Now · Rain Later (80%)!" with zero breaking changes.
+inline void parse_ha_forecast_payload(const std::string &raw, std::string &out_3day,
+                                      std::string &out_today_cond, int &out_precip_pct) {
+  if (raw.size() >= 6 && strncasecmp(raw.c_str(), "TODAY,", 6) == 0) {
+    size_t pipe = raw.find('|');
+    std::string seg = (pipe == std::string::npos) ? raw.substr(6) : raw.substr(6, pipe - 6);
+    size_t comma = seg.find(',');
+    std::string cond = (comma == std::string::npos) ? seg : seg.substr(0, comma);
+    // Trim whitespace around condition
+    size_t s = 0;
+    while (s < cond.size() && cond[s] == ' ') s++;
+    size_t e = cond.size();
+    while (e > s && cond[e - 1] == ' ') e--;
+    out_today_cond = cond.substr(s, e - s);
+
+    int pct = -1;
+    if (comma != std::string::npos) {
+      const char *p = seg.c_str() + comma + 1;
+      while (*p == ' ') p++;
+      if (isdigit((unsigned char)*p)) {
+        pct = std::clamp(atoi(p), 0, 100);
+      }
+    }
+    out_precip_pct = pct;
+    out_3day = (pipe == std::string::npos) ? "" : raw.substr(pipe + 1);
+    return;
+  }
+  out_3day = raw;
+}
+
 // Evaluates Family + School calendars + Custom Countdown into unified display strings
 // across all 3 priority modes (0=Smart Auto, 1=Today & Routine First, 2=Countdowns First).
 inline CalendarView build_calendar_view(const IcsFeedSummary &fam, const IcsFeedSummary &sch,
@@ -825,6 +859,24 @@ class IcsStreamParser {
     has_pending_ = true;
   }
 
+  void add_exdate_(int64_t jdn) {
+    // Only retain EXDATEs near the active window so historical cancellations don't evict upcoming ones
+    if (jdn < cur_jdn_ - 14 || jdn > cur_jdn_ + 400) return;
+    for (int i = 0; i < ev_exdate_n_; i++) {
+      if (ev_exdates_[i] == jdn) return;
+    }
+    if (ev_exdate_n_ < kMaxExdates) {
+      ev_exdates_[ev_exdate_n_++] = jdn;
+    }
+  }
+
+  bool is_exdate_(int64_t jdn) const {
+    for (int i = 0; i < ev_exdate_n_; i++) {
+      if (ev_exdates_[i] == jdn) return true;
+    }
+    return false;
+  }
+
   void reset_event_() {
     ev_has_start_ = false;
     ev_has_end_ = false;
@@ -838,6 +890,7 @@ class IcsStreamParser {
     ev_byday_mask_ = 0;
     ev_has_until_ = false;
     ev_cancelled_ = false;
+    ev_exdate_n_ = 0;
     ev_sy_ = ev_sm_ = ev_sd_ = 0;
     ev_ey_ = ev_em_ = ev_ed_ = 0;
     ev_hr_ = ev_mn_ = 0;
@@ -884,6 +937,10 @@ class IcsStreamParser {
       int64_t cand = ymd_to_jdn(cur_y_, lm, ld);
       if (cand + span < cur_jdn_) cand = ymd_to_jdn(cur_y_ + 1, lm, ld);
       if (cand < start_jdn) cand = start_jdn;
+      if (is_exdate_(cand)) {
+        cand = ymd_to_jdn(cur_y_ + 1, lm, ld);
+        if (cand < start_jdn || is_exdate_(cand)) return;
+      }
       if (ev_has_until_ && cand > ev_until_jdn_) return;
       start_jdn = cand;
       end_jdn_incl = cand + span;
@@ -893,21 +950,25 @@ class IcsStreamParser {
       uint8_t byday = (ev_byday_mask_ != 0) ? ev_byday_mask_ : (uint8_t)(1U << orig_dow);
       int64_t week0_mon = start_jdn - orig_dow;
       int64_t best_cand = -1;
-      // Search active occurrences from (cur_jdn_ - span) forward up to iv*7+7 days for the earliest active/upcoming match
+      // Search active occurrences from (cur_jdn_ - span) forward up to iv*7*(exdates+1)+7 days
       int64_t scan_lo = std::max(start_jdn, cur_jdn_ - span);
-      int64_t scan_hi = cur_jdn_ + (int64_t)iv * 7 + 7;
+      int64_t extra_span = std::min<int64_t>(180, (int64_t)iv * 7 * (ev_exdate_n_ + 1) + 7);
+      int64_t scan_hi = cur_jdn_ + extra_span;
       for (int64_t cand = scan_lo; cand <= scan_hi; cand++) {
         if (ev_has_until_ && cand > ev_until_jdn_) break;
         int cdow = (int)(((cand % 7) + 7) % 7);
         if ((byday & (1U << cdow)) == 0) continue;
         int64_t wk_idx = (cand - week0_mon) / 7;
         if (wk_idx < 0 || (wk_idx % iv) != 0) continue;
+        if (is_exdate_(cand)) continue;
         best_cand = cand;
         break;
       }
       if (best_cand < 0) return;
       start_jdn = best_cand;
       end_jdn_incl = best_cand + span;
+    } else if (is_exdate_(start_jdn)) {
+      return;
     }
 
     bool hits_today = (cur_jdn_ >= start_jdn && cur_jdn_ <= end_jdn_incl);
@@ -1016,6 +1077,20 @@ class IcsStreamParser {
       clean_summary(val, ev_summary_, sizeof(ev_summary_));
     } else if (strncmp(line, "STATUS", 6) == 0 && (line[6] == ':' || line[6] == ';')) {
       if (icontains(val, "CANCELLED")) ev_cancelled_ = true;
+    } else if (strncmp(line, "EXDATE", 6) == 0 && (line[6] == ':' || line[6] == ';')) {
+      const char *p = val;
+      while (*p != '\0') {
+        int ey = 0, em = 0, ed = 0, eh = 0, emn = 0;
+        bool eht = false, eutc = false;
+        if (parse_ics_date(p, ey, em, ed, eht, eh, emn, eutc)) {
+          int64_t ej = ymd_to_jdn(ey, em, ed);
+          if (eht && eutc) apply_utc_offset_(ej, eh, emn);
+          add_exdate_(ej);
+        }
+        const char *comma = strchr(p, ',');
+        if (comma == nullptr) break;
+        p = comma + 1;
+      }
     } else if (strncmp(line, "RRULE", 5) == 0 && (line[5] == ':' || line[5] == ';')) {
       if (icontains(val, "FREQ=YEARLY")) ev_yearly_ = true;
       else if (icontains(val, "FREQ=WEEKLY")) ev_weekly_ = true;
@@ -1079,6 +1154,9 @@ class IcsStreamParser {
   int ev_ey_{0}, ev_em_{0}, ev_ed_{0};
   int ev_hr_{0}, ev_mn_{0};
   int ev_ehr_{0}, ev_emn_{0};
+  static constexpr int kMaxExdates = 8;
+  int64_t ev_exdates_[kMaxExdates]{};
+  int ev_exdate_n_{0};
   int64_t ev_until_jdn_{0};
   char ev_summary_[48]{};
 

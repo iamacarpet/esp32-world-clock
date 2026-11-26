@@ -540,6 +540,47 @@ int main() {
     assert(b4.pack_hint == "Big Coat, Hat & Gloves");
   }
 
+  // 14. v1.3.1 Polish: HA TODAY,<cond>,<precip_pct>| forecast payload + RFC 5545 EXDATE exclusions
+  {
+    // Legacy 3-day HA string stays untouched and does not overwrite today's fields
+    std::string out3, tcond = "sunny";
+    int tpct = 10;
+    parse_ha_forecast_payload("FRI,cloudy,11,6|SAT,rainy,10,4|SUN,sunny,13,7", out3, tcond, tpct);
+    assert(out3 == "FRI,cloudy,11,6|SAT,rainy,10,4|SUN,sunny,13,7");
+    assert(tcond == "sunny" && tpct == 10);
+
+    // v1.3.1 optional leading TODAY,<cond>,<precip_pct>| unlocks "Dry Now · Rain Later (80%)!" on HA clocks
+    parse_ha_forecast_payload("TODAY,rainy,80|FRI,cloudy,11,6|SAT,rainy,10,4|SUN,sunny,13,7", out3, tcond, tpct);
+    assert(out3 == "FRI,cloudy,11,6|SAT,rainy,10,4|SUN,sunny,13,7");
+    assert(tcond == "rainy" && tpct == 80);
+    auto b_ha = build_day_prep_briefing("partlycloudy", tcond, 10.0f, 12.0f, 6.0f, tpct, false);
+    assert(b_ha.headline == "Dry Now · Rain Later (80%)!");
+
+    // EXDATE suppresses single cancelled week of a weekly club (including comma-separated + UTC Z dates)
+    const char *exdate_ics =
+        "BEGIN:VCALENDAR\r\n"
+        "BEGIN:VEVENT\r\n"
+        "DTSTART:20261005T160000\r\n"
+        "RRULE:FREQ=WEEKLY\r\n"
+        "EXDATE;TZID=Europe/London:20261012T160000,20261019T160000\r\n"
+        "SUMMARY:Swimming Club\r\n"
+        "END:VEVENT\r\n"
+        "END:VCALENDAR\r\n";
+
+    // Mon Oct 12 (excluded via EXDATE) -> MUST NOT fire today; next upcoming occurrence is Oct 26 (14 days away)!
+    IcsStreamParser ex_skip(2026, 10, 12, false, 60);
+    ex_skip.feed(exdate_ics, strlen(exdate_ics));
+    ex_skip.finish();
+    assert(!ex_skip.summary().today_timed[0].valid);
+    assert(ex_skip.summary().countdowns[0].valid && ex_skip.summary().countdowns[0].days_away == 14);
+
+    // Mon Oct 26 (not excluded) -> fires normally at 16:00!
+    IcsStreamParser ex_hit(2026, 10, 26, false, 60);
+    ex_hit.feed(exdate_ics, strlen(exdate_ics));
+    ex_hit.finish();
+    assert(ex_hit.summary().today_timed[0].valid && std::string(ex_hit.summary().today_timed[0].title) == "Swimming Club");
+  }
+
   printf("ALL CLOCK_MATH & ICS_PARSER UNIT TESTS PASSED!\n");
   return 0;
 }

@@ -18,7 +18,8 @@ text_sensor:
     on_value:
       then:
         - lambda: |-
-            id(cur_wx_3day) = x;
+            world_clock::parse_ha_forecast_payload(
+                x, id(cur_wx_3day), id(cur_wx_today_cond), id(cur_wx_precip_pct));
             id(force_redraw) = true;
 
 sensor:

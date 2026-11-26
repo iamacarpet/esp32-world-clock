@@ -93,6 +93,9 @@ lvgl:
             align: TOP_LEFT
             x: 468
             y: 413
+            width: 320
+            height: 22
+            long_mode: DOT
             hidden: true
             text: "SLEEP TIME"
             text_font: font_card_title
@@ -103,6 +106,9 @@ lvgl:
             align: TOP_LEFT
             x: 468
             y: 442
+            width: 320
+            height: 19
+            long_mode: DOT
             hidden: true
             text: "Sweet dreams!"
             text_font: font_card_sub
