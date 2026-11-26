@@ -13,6 +13,8 @@ constexpr size_t kMapWidth = 800;
 constexpr size_t kMapHeight = 322;
 constexpr size_t kBgBytes = kMapWidth * kMapHeight * 3UL;
 constexpr size_t kScratchBytes = 24576UL;
+static_assert((kBgBytes % alignof(float)) == 0, "kBgBytes must preserve float alignment for scratch LUT");
+static_assert(kScratchBytes >= kMapWidth * sizeof(float), "kScratchBytes too small for wave_lut");
 
 struct WorldMapParams {
   float home_lat{51.5074f};

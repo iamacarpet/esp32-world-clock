@@ -110,12 +110,12 @@ Every tagged GitHub Release (`v*`) automatically builds and attaches universal p
 - **`world-clock-standalone-vX.Y.Z-factory.bin`** — First-time USB flash at offset `0x0` ([ESP Web Tools](https://web.esphome.io/) or `esptool.py`).
 - **`world-clock-standalone-vX.Y.Z-ota.bin`** — One-click wireless update via the clock's Web UI (**OTA Update**). Preserves Wi-Fi, child's name, birth date, coordinates, sleep schedule, brightness, and custom wording automatically!
 
-### Multi-Device Ready (Hardware MAC Auto-Identity)
+### Multi-Device Ready & Hardened Security
 Multiple clocks in the same household can run the exact same `.bin` without colliding:
 - **Unique mDNS Hostname**: `http://world-clock-<mac6>.local/`
 - **Unique Setup Wi-Fi Hotspot**: `world-clock-<mac6>` (password: `ClockSetup123`)
-- **Unique Web Settings Login**: username `parent`, password `clock-<mac6>` (derived automatically from the board's last 6 hardware MAC hex characters)
-- **Zero Setup Card Needed**: Unplug & plug in any clock to see its exact URL, IP address, and `parent / clock-<mac6>` login displayed on the 5-inch boot screen.
+- **Random NVS-Persisted Web Settings Password**: username `parent` with a **cryptographically random 8-character password** generated via `esp_random()` on first boot, persisted in NVS across reboots & OTA updates, and displayed **only on the physical 5-inch boot screen** (never derived from broadcast MAC/mDNS; unauthenticated TCP port 3232 ESPHome OTA is completely disabled on standalone releases).
+- **Zero Setup Card Needed**: Unplug & plug in any clock during daytime/evening to see its exact URL, IP address, sleep-safe red QR code, and unique login right on the screen.
 
 ---
 
@@ -139,10 +139,11 @@ Multiple clocks in the same household can run the exact same `.bin` without coll
 │   ├── dock_weather.yaml         # Pluggable Band 3: Weather + 3-Day Forecast + Sleep/Holiday Cards
 │   ├── dock_energy_ha.yaml       # Pluggable Band 3: 4-Tile Home Energy & Tariff Strip (HA)
 │   ├── ha_weather_sensors.yaml   # HA weather entity bindings (pair with dock_weather.yaml)
-│   ├── ha_calendar_sensors.yaml  # Optional HA Family & School Calendar entity bindings
-│   ├── clock_core.yaml           # Shared globals, OTA splash, Shop Demo Mode, 10fps loop
-│   ├── backend_homeassistant.yaml# HA API, time, ISS, overrides & 1Hz routine/schedule engine
-│   └── backend_standalone.yaml   # Core 0 NetWorker, Google NTP, Captive Portal, QR & Web UI v3
+│   ├── ha_kids_calendar.yaml     # Optional HA Kids/Teen controls + Direct Core 0 .ics calendars
+│   ├── ha_calendar_sensors.yaml  # Optional HA native calendar.* template sensor bindings
+│   ├── clock_core.yaml           # Shared globals, thread-safe OTA UI, Shop Demo Mode, 10fps loop
+│   ├── backend_homeassistant.yaml# Lean HA API, password-protected OTA, time, ISS & 4-phase engine
+│   └── backend_standalone.yaml   # Core 0 NetWorker (HTTPS/SSRF-hardened), NTP, Captive Portal & Web UI v3
 ├── examples/                     # Public, personal-info-free starter & universal release configs
 ├── sim/                          # Headless ESPHome host + SnapshotDisplay emulators (zero X11/SDL!)
 ├── scripts/run_emulator.py       # Compiles/runs emulators, builds PNG gallery & GIF/MP4 reels
@@ -160,7 +161,7 @@ Multiple clocks in the same household can run the exact same `.bin` without coll
 
 Your ESPHome Device Builder (`http://<your-esphome-ip>:6052/`) can pull `packages/` and `components/world_clock/` **directly from GitHub** — you only paste a ~55-line device YAML into ESPHome!
 
-In any device YAML on your ESPHome server, replace the local `external_components:` and `packages:` blocks with:
+In any device YAML on your ESPHome server (start from [`examples/leo-clock-ha.yaml`](examples/leo-clock-ha.yaml) or [`examples/office-clock-energy-ha.yaml`](examples/office-clock-energy-ha.yaml) for the complete `substitutions:` block!), replace the local `external_components:` and `packages:` blocks with:
 
 ```yaml
 external_components:
@@ -181,13 +182,14 @@ packages:
       - packages/hardware_jc8048w550n.yaml
       - packages/fonts.yaml
       - packages/ui_shell.yaml
-      - packages/dock_weather.yaml        # Swap for packages/dock_energy_ha.yaml for Office Desk!
-      - packages/ha_weather_sensors.yaml  # Only needed for HA + dock_weather.yaml
+      - packages/dock_weather.yaml          # Swap for packages/dock_energy_ha.yaml for Office Desk!
+      - packages/ha_weather_sensors.yaml    # Only needed for HA + dock_weather.yaml
       - packages/clock_core.yaml
-      - packages/backend_homeassistant.yaml  # Or packages/backend_standalone.yaml
+      - packages/backend_homeassistant.yaml # Or packages/backend_standalone.yaml
+      - packages/ha_kids_calendar.yaml      # Kids/Teen HA clocks only (omit on Office Energy clocks!)
 ```
 
-*(Make sure your ESPHome server's `secrets.yaml` defines `wifi_ssid`, `wifi_password`, `ap_password`, and `api_key` or `web_auth_user`/`web_auth_pass`.)*
+*(Make sure your ESPHome server's `secrets.yaml` defines `wifi_ssid`, `wifi_password`, `ap_password`, `ota_password`, and `api_key` or `web_auth_user`/`web_auth_pass` — see [`secrets.yaml.example`](secrets.yaml.example).)*
 
 ---
 

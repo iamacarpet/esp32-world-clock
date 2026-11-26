@@ -61,6 +61,7 @@ class SpriteEngine {
     if (cv == nullptr || p.bg_cache == nullptr) return;
 
     uint8_t *bg = p.bg_cache;
+    static_assert(kScratchBytes >= 80UL * 80UL * 3UL, "kScratchBytes too small for 80x80 sprite scratch buffer");
     uint8_t *s_loc = bg + kBgBytes;
 
 #if LVGL_VERSION_MAJOR >= 9

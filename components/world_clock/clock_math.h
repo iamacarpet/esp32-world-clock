@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -13,6 +14,39 @@
 #endif
 
 namespace world_clock {
+
+// Cross-task lock-free OTA UI state so async HTTP web_server / ESPHome OTA callbacks
+// never touch LVGL objects directly (Core 1's 100ms loop consumes this safely).
+struct OtaUiState {
+  // 0 = idle, 1 = active/progress, 2 = complete, 3 = error
+  std::atomic<uint8_t> state{0};
+  std::atomic<int> pct{0};
+};
+
+inline OtaUiState &ota_ui_state() {
+  static OtaUiState s;
+  return s;
+}
+
+// Formats a 64-bit random token into an unambiguous 8-character lowercase setup password
+// (32-symbol alphabet => 40 bits of entropy, easy to read on screen and type on a phone).
+inline std::string format_random_setup_password(uint64_t token) {
+  static const char kAlpha[33] = "abcdefghjkmnpqrstuvwxyz23456789";  // 31 chars? No -> exactly 32 below
+  (void)kAlpha;
+  static const char kSym[33] = "abcdefghjkmnpqrstuvwxyz23456789@";
+  // Prefer pure alphanumeric 32-char Crockford-style lowercase set (omits i,l,o,0,1 -> 23 letters + 8 digits = 31; include '0'->no, include 'z' -> a..z(26)-i,l,o(3)=23; 2..9=8 -> 31, add 'L'->no, use 31 modulo!)
+  static const char kSafe[] = "abcdefghjkmnpqrstuvwxyz23456789";  // 31 unambiguous alphanumeric chars
+  constexpr uint64_t kBase = sizeof(kSafe) - 1;
+  (void)kSym;
+  std::string out;
+  out.reserve(8);
+  uint64_t v = token;
+  for (int i = 0; i < 8; i++) {
+    out.push_back(kSafe[v % kBase]);
+    v /= kBase;
+  }
+  return out;
+}
 
 // Circadian sleep phases:
 // 0 = Daytime, 1 = Deep Sleep (Red), 2 = Morning Quiet Play (Amber), 3 = Evening Wind-Down (Amber)
@@ -27,8 +61,8 @@ struct ScheduleConfig {
   int quiet_m{5 * 60};             // 05:00
   int wakeup_m{6 * 60 + 30};       // 06:30
   int special_delay_m{0};          // Optional bedtime shift on Xmas Eve / NYE / Bonfire Night
-  int weekend_offset_m{0};         // Optional morning lie-in shift (0..90 min) when TODAY is non-school
-  int non_school_bedtime_m{0};     // Optional evening late-bedtime shift (0..90 min) when TOMORROW is non-school
+  int weekend_offset_m{0};         // Optional morning lie-in shift (0..90 min) on non-school mornings
+  int non_school_bedtime_m{0};     // Optional evening late-bedtime shift (0..90 min) on non-school nights
 };
 
 // Exact Gregorian calendar -> Julian Day Number (valid for all Gregorian dates).
@@ -37,6 +71,19 @@ inline int64_t ymd_to_jdn(int y, int m, int d) {
   int yy = y + 4800 - a;
   int mm = m + 12 * a - 3;
   return (int64_t)d + (153 * mm + 2) / 5 + 365LL * yy + yy / 4 - yy / 100 + yy / 400 - 32045;
+}
+
+// Inverse Gregorian JDN -> (year, month, day).
+inline void jdn_to_ymd(int64_t jdn, int &y, int &m, int &d) {
+  int64_t a = jdn + 32044;
+  int64_t b = (4 * a + 3) / 146097;
+  int64_t c = a - (146097 * b) / 4;
+  int64_t dd = (4 * c + 3) / 1461;
+  int64_t e = c - (1461 * dd) / 4;
+  int64_t mm = (5 * e + 2) / 153;
+  d = (int)(e - (153 * mm + 2) / 5 + 1);
+  m = (int)(mm + 3 - 12 * (mm / 10));
+  y = (int)(100 * b + dd - 4800 + (mm / 10));
 }
 
 inline int days_between_ymd(int y1, int m1, int d1, int y2, int m2, int d2) {
@@ -50,6 +97,24 @@ inline int ymd_dow_num(int y, int m, int d) {
   if (m < 3) y -= 1;
   int w = (y + y / 4 - y / 100 + y / 400 + t[m - 1] + d) % 7;
   return (w + 7) % 7;
+}
+
+inline bool is_leap_year(int y) { return ((y % 4 == 0) && (y % 100 != 0)) || (y % 400 == 0); }
+
+inline bool is_special_night_ymd(int m, int d) {
+  return (m == 12 && (d == 24 || d == 31)) || (m == 11 && d == 5);
+}
+
+// Returns 0 on the child's birthday, or 1..366 days until the next birthday (handles 1st-of-month & year rollover!).
+inline int days_until_next_birthday(int cur_y, int cur_m, int cur_d, int b_mon, int b_day) {
+  if (b_mon < 1 || b_mon > 12 || b_day < 1 || b_day > 31) return -1;
+  auto clamp_bday = [](int yr, int bm, int bd) {
+    if (bm == 2 && bd == 29 && !is_leap_year(yr)) return 28;
+    return bd;
+  };
+  int d_this = days_between_ymd(cur_y, cur_m, cur_d, cur_y, b_mon, clamp_bday(cur_y, b_mon, b_day));
+  if (d_this >= 0) return d_this;
+  return days_between_ymd(cur_y, cur_m, cur_d, cur_y + 1, b_mon, clamp_bday(cur_y + 1, b_mon, b_day));
 }
 
 inline bool is_in_circular_range(int now_m, int start_m, int end_m) {
@@ -69,43 +134,80 @@ inline int circular_minutes_between(int start_m, int end_m) {
 }
 
 inline int effective_winddown_m(const ScheduleConfig &cfg, bool is_special_night,
-                                bool is_tomorrow_non_school = false) {
+                                bool is_non_school_night = false) {
   int delay = is_special_night ? std::clamp(cfg.special_delay_m, 0, 180) : 0;
-  int eve = (is_tomorrow_non_school && cfg.non_school_bedtime_enabled)
+  int eve = (is_non_school_night && cfg.non_school_bedtime_enabled)
                 ? std::clamp(cfg.non_school_bedtime_m, 0, 120)
                 : 0;
   return (cfg.winddown_m + std::max(delay, eve)) % 1440;
 }
 
 inline int effective_bedtime_m(const ScheduleConfig &cfg, bool is_special_night,
-                               bool is_tomorrow_non_school = false) {
+                               bool is_non_school_night = false) {
   int delay = is_special_night ? std::clamp(cfg.special_delay_m, 0, 180) : 0;
-  int eve = (is_tomorrow_non_school && cfg.non_school_bedtime_enabled)
+  int eve = (is_non_school_night && cfg.non_school_bedtime_enabled)
                 ? std::clamp(cfg.non_school_bedtime_m, 0, 120)
                 : 0;
   return (cfg.bedtime_m + std::max(delay, eve)) % 1440;
 }
 
-inline int effective_quiet_m(const ScheduleConfig &cfg, bool is_today_non_school) {
-  int shift = (is_today_non_school && cfg.weekend_liein_enabled) ? std::clamp(cfg.weekend_offset_m, 0, 120) : 0;
+inline int effective_quiet_m(const ScheduleConfig &cfg, bool is_non_school_morning) {
+  int shift = (is_non_school_morning && cfg.weekend_liein_enabled) ? std::clamp(cfg.weekend_offset_m, 0, 120) : 0;
   return (cfg.quiet_m + shift) % 1440;
 }
 
-inline int effective_wakeup_m(const ScheduleConfig &cfg, bool is_today_non_school) {
-  int shift = (is_today_non_school && cfg.weekend_liein_enabled) ? std::clamp(cfg.weekend_offset_m, 0, 120) : 0;
+inline int effective_wakeup_m(const ScheduleConfig &cfg, bool is_non_school_morning) {
+  int shift = (is_non_school_morning && cfg.weekend_liein_enabled) ? std::clamp(cfg.weekend_offset_m, 0, 120) : 0;
   return (cfg.wakeup_m + shift) % 1440;
 }
 
-// Evaluates the 4-phase circadian schedule, gracefully handling midnight wrap, disabled phases,
-// special-night delay, morning lie-in (when TODAY is non-school), and late evening bedtime
-// (when TOMORROW is non-school — e.g. Fri/Sat/pre-holiday late, Sunday night early for Monday school!).
-inline uint8_t evaluate_schedule(int now_m, const ScheduleConfig &cfg, bool is_special_night,
-                                 bool is_today_non_school = false, bool is_tomorrow_non_school = false) {
+// Overnight-continuous cycle helpers (noon-split at 12:00 / 720m):
+// - Afternoon/Evening (now_m >= 720): active sleep cycle runs TONIGHT -> TOMORROW MORNING,
+//   so both bedtime and morning quiet/wake targets use `is_tomorrow_non_school` and `is_today_special_night`.
+// - Morning/Post-Midnight (now_m < 720): active sleep cycle started YESTERDAY EVENING -> THIS MORNING,
+//   so both bedtime and morning quiet/wake targets use `is_today_non_school` and `is_yesterday_special_night`.
+// This guarantees zero jump at 00:00 in sleep phase, {quiet} card wording, and 5 countdown stars!
+inline int effective_cycle_winddown_m(int now_m, const ScheduleConfig &cfg, bool is_today_special_night,
+                                      bool is_today_non_school, bool is_tomorrow_non_school,
+                                      bool is_yesterday_special_night = false) {
   now_m = ((now_m % 1440) + 1440) % 1440;
-  int wd_start = effective_winddown_m(cfg, is_special_night, is_tomorrow_non_school);
-  int bed_start = effective_bedtime_m(cfg, is_special_night, is_tomorrow_non_school);
-  int quiet_start = effective_quiet_m(cfg, is_today_non_school);
-  int wake_end = effective_wakeup_m(cfg, is_today_non_school);
+  bool morning = (now_m < 720);
+  return effective_winddown_m(cfg, morning ? is_yesterday_special_night : is_today_special_night,
+                              morning ? is_today_non_school : is_tomorrow_non_school);
+}
+
+inline int effective_cycle_bedtime_m(int now_m, const ScheduleConfig &cfg, bool is_today_special_night,
+                                     bool is_today_non_school, bool is_tomorrow_non_school,
+                                     bool is_yesterday_special_night = false) {
+  now_m = ((now_m % 1440) + 1440) % 1440;
+  bool morning = (now_m < 720);
+  return effective_bedtime_m(cfg, morning ? is_yesterday_special_night : is_today_special_night,
+                             morning ? is_today_non_school : is_tomorrow_non_school);
+}
+
+inline int effective_cycle_quiet_m(int now_m, const ScheduleConfig &cfg, bool is_today_non_school,
+                                   bool is_tomorrow_non_school) {
+  now_m = ((now_m % 1440) + 1440) % 1440;
+  return effective_quiet_m(cfg, (now_m < 720) ? is_today_non_school : is_tomorrow_non_school);
+}
+
+inline int effective_cycle_wakeup_m(int now_m, const ScheduleConfig &cfg, bool is_today_non_school,
+                                    bool is_tomorrow_non_school) {
+  now_m = ((now_m % 1440) + 1440) % 1440;
+  return effective_wakeup_m(cfg, (now_m < 720) ? is_today_non_school : is_tomorrow_non_school);
+}
+
+// Evaluates the 4-phase circadian schedule continuously across midnight!
+inline uint8_t evaluate_schedule(int now_m, const ScheduleConfig &cfg, bool is_today_special_night,
+                                 bool is_today_non_school = false, bool is_tomorrow_non_school = false,
+                                 bool is_yesterday_special_night = false) {
+  now_m = ((now_m % 1440) + 1440) % 1440;
+  int wd_start = effective_cycle_winddown_m(now_m, cfg, is_today_special_night, is_today_non_school,
+                                            is_tomorrow_non_school, is_yesterday_special_night);
+  int bed_start = effective_cycle_bedtime_m(now_m, cfg, is_today_special_night, is_today_non_school,
+                                            is_tomorrow_non_school, is_yesterday_special_night);
+  int quiet_start = effective_cycle_quiet_m(now_m, cfg, is_today_non_school, is_tomorrow_non_school);
+  int wake_end = effective_cycle_wakeup_m(now_m, cfg, is_today_non_school, is_tomorrow_non_school);
 
   if (cfg.winddown_enabled && is_in_circular_range(now_m, wd_start, bed_start)) {
     return 3;  // Evening Wind-Down (Amber)
@@ -125,20 +227,25 @@ inline uint8_t evaluate_schedule(int now_m, const ScheduleConfig &cfg, bool is_s
   return 0;  // Daytime
 }
 
-// Computes remaining fraction (0.0 .. 1.0) in the active Sleep (1) or Wind-Down (3) phase
-// so 1..5 glowing countdown stars gently fade out as bedtime or morning approaches!
+// Computes continuous remaining fraction (0.0 .. 1.0) in the active Sleep (1) or Wind-Down (3) phase
+// across midnight so 1..5 glowing countdown stars never jump at 00:00!
 inline float sleep_phase_remaining_01(int now_m, uint8_t phase, const ScheduleConfig &cfg,
-                                      bool is_special_night, bool is_today_non_school = false,
-                                      bool is_tomorrow_non_school = false) {
+                                      bool is_today_special_night, bool is_today_non_school = false,
+                                      bool is_tomorrow_non_school = false,
+                                      bool is_yesterday_special_night = false) {
   now_m = ((now_m % 1440) + 1440) % 1440;
   int start_m = 0;
   int end_m = 0;
   if (phase == 3) {
-    start_m = effective_winddown_m(cfg, is_special_night, is_tomorrow_non_school);
-    end_m = effective_bedtime_m(cfg, is_special_night, is_tomorrow_non_school);
+    start_m = effective_cycle_winddown_m(now_m, cfg, is_today_special_night, is_today_non_school,
+                                         is_tomorrow_non_school, is_yesterday_special_night);
+    end_m = effective_cycle_bedtime_m(now_m, cfg, is_today_special_night, is_today_non_school,
+                                      is_tomorrow_non_school, is_yesterday_special_night);
   } else if (phase == 1) {
-    start_m = effective_bedtime_m(cfg, is_special_night, is_tomorrow_non_school);
-    end_m = cfg.quiet_enabled ? effective_quiet_m(cfg, is_today_non_school) : effective_wakeup_m(cfg, is_today_non_school);
+    start_m = effective_cycle_bedtime_m(now_m, cfg, is_today_special_night, is_today_non_school,
+                                        is_tomorrow_non_school, is_yesterday_special_night);
+    end_m = cfg.quiet_enabled ? effective_cycle_quiet_m(now_m, cfg, is_today_non_school, is_tomorrow_non_school)
+                              : effective_cycle_wakeup_m(now_m, cfg, is_today_non_school, is_tomorrow_non_school);
   } else {
     return 0.0f;
   }
@@ -268,9 +375,19 @@ inline std::string expand_tokens(std::string tmpl, const TokenContext &ctx) {
   return tmpl;
 }
 
+// Uppercases ASCII a..z AND common UTF-8 Latin-1 accented letters (à..þ excluding ÷).
 inline std::string to_upper_ascii(std::string s) {
-  for (char &c : s) {
-    if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+  for (size_t i = 0; i < s.size(); i++) {
+    unsigned char c = (unsigned char)s[i];
+    if (c >= 'a' && c <= 'z') {
+      s[i] = (char)(c - 32);
+    } else if (c == 0xC3 && i + 1 < s.size()) {
+      unsigned char b = (unsigned char)s[i + 1];
+      if (b >= 0xA0 && b <= 0xBE && b != 0xB7) {
+        s[i + 1] = (char)(b - 0x20);
+      }
+      i++;
+    }
   }
   return s;
 }
@@ -315,18 +432,85 @@ inline float haversine_km(float lat1, float lon1, float lat2, float lon2) {
   return 6371.0f * 2.0f * atan2f(sqrtf(a), sqrtf(std::max(0.0f, 1.0f - a)));
 }
 
+// Finds the matching '}' of the first JSON object starting at or after `src`.
+inline const char *find_json_object_end(const char *src) {
+  if (src == nullptr) return nullptr;
+  const char *p = strchr(src, '{');
+  if (p == nullptr) return nullptr;
+  int depth = 0;
+  bool in_str = false;
+  bool esc = false;
+  for (; *p != '\0'; p++) {
+    if (in_str) {
+      if (esc) {
+        esc = false;
+      } else if (*p == '\\') {
+        esc = true;
+      } else if (*p == '"') {
+        in_str = false;
+      }
+      continue;
+    }
+    if (*p == '"') {
+      in_str = true;
+    } else if (*p == '{') {
+      depth++;
+    } else if (*p == '}') {
+      depth--;
+      if (depth == 0) return p + 1;
+    }
+  }
+  return nullptr;
+}
+
+// Bounded JSON numeric extractor (never scans past `end`, preventing key bleed into sibling objects).
+inline bool extract_json_num_bounded(const char *start, const char *end, const char *key, float &out_v) {
+  if (start == nullptr || key == nullptr) return false;
+  size_t klen = strlen(key);
+  if (klen == 0) return false;
+  const char *limit = (end != nullptr) ? end : (start + strlen(start));
+  const char *p = start;
+  while (p + klen <= limit) {
+    if (memcmp(p, key, klen) == 0) {
+      const char *q = p + klen;
+      while (q < limit && (*q == ' ' || *q == '\t' || *q == '\r' || *q == '\n')) q++;
+      if (q < limit && *q == ':') {
+        q++;
+        while (q < limit && (*q == ' ' || *q == '\t' || *q == '\r' || *q == '\n' || *q == '"')) q++;
+        if (q < limit) {
+          char *endp = nullptr;
+          float v = strtof(q, &endp);
+          if (endp != q && endp <= limit && std::isfinite(v)) {
+            out_v = v;
+            return true;
+          }
+        }
+      }
+    }
+    p++;
+  }
+  return false;
+}
+
 // Lightweight JSON & Open-Meteo parsing helpers (zero heap allocations).
 inline bool extract_json_num(const char *src, const char *key, float &out_v) {
-  if (src == nullptr || key == nullptr) return false;
+  return extract_json_num_bounded(src, nullptr, key, out_v);
+}
+
+// Checks whether a JSON key maps to an exact string value (ignoring whitespace around ':').
+inline bool json_key_equals_str(const char *src, const char *key, const char *expected) {
+  if (src == nullptr || key == nullptr || expected == nullptr) return false;
   const char *p = strstr(src, key);
   if (p == nullptr) return false;
   p += strlen(key);
-  while (*p == ' ' || *p == ':' || *p == '"') p++;
-  char *endp = nullptr;
-  float v = strtof(p, &endp);
-  if (endp == p || !std::isfinite(v)) return false;
-  out_v = v;
-  return true;
+  while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+  if (*p != ':') return false;
+  p++;
+  while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+  if (*p != '"') return false;
+  p++;
+  size_t elen = strlen(expected);
+  return (strncmp(p, expected, elen) == 0 && p[elen] == '"');
 }
 
 inline bool parse_csv_floats(const char *arr_start, float *out, int count) {

@@ -6,6 +6,7 @@ substitutions:
   wifi_password: !secret wifi_password
   ap_password: !secret ap_password
   api_key: !secret api_key
+  ota_password: !secret ota_password
   device_comment: "Home Assistant Kids World & Space Clock"
   splash_kicker_text: "LEO'S WORLD & SPACE CLOCK"
   default_child_name: "LEO"
@@ -81,3 +82,4 @@ packages:
   ha_weather: !include ../packages/ha_weather_sensors.yaml
   core: !include ../packages/clock_core.yaml
   backend: !include ../packages/backend_homeassistant.yaml
+  kids_cal: !include ../packages/ha_kids_calendar.yaml

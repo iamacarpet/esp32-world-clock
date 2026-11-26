@@ -8,6 +8,7 @@ substitutions:
   wifi_password: !secret wifi_password
   ap_password: !secret ap_password
   api_key: !secret api_key
+  ota_password: !secret ota_password
   device_comment: "Adult Desk World Map, ISS & Home Energy Clock"
   splash_kicker_text: "OFFICE WORLD & ENERGY CLOCK"
   default_child_name: "OFFICE"

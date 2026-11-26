@@ -1,0 +1,371 @@
+# Home Assistant Kids, Teen & Direct Core 0 .ics Calendar Package
+# Pair with packages/backend_homeassistant.yaml on Kids/Teen HA clocks (e.g. examples/leo-clock-ha.yaml).
+# Intentionally separate from backend_homeassistant.yaml so Adult / Office Energy clocks never spawn
+# the Core 0 .ics worker or register kids/school entities in Home Assistant!
+
+world_clock:
+  calendar_ics: true
+
+esphome:
+  includes:
+    - <esp_crt_bundle.h>
+  on_boot:
+    - priority: -100
+      then:
+        - lambda: |-
+            auto &t = world_clock::standalone_telemetry();
+            t.ensure_mutex();
+            if (t.lock(pdMS_TO_TICKS(50))) {
+              snprintf(t.family_cal_url, sizeof(t.family_cal_url), "%s", id(ha_family_cal_url).state.c_str());
+              snprintf(t.school_cal_url, sizeof(t.school_cal_url), "%s", id(ha_school_cal_url).state.c_str());
+              t.unlock();
+            }
+            world_clock::NetWorker::start((float)${default_lat}, (float)${default_lon});
+
+esp32:
+  framework:
+    sdkconfig_options:
+      CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC: "y"
+      CONFIG_MBEDTLS_CERTIFICATE_BUNDLE: "y"
+      CONFIG_LWIP_MAX_SOCKETS: "18"
+
+http_request:
+  timeout: 5s
+
+select:
+  - platform: template
+    id: ha_age_profile
+    name: "Age & Visual Profile"
+    optimistic: true
+    restore_value: true
+    initial_option: "Junior Space Kid (7-11)"
+    options:
+      - "Little Explorer (3-6)"
+      - "Junior Space Kid (7-11)"
+      - "Teen & Study Desk (12+)"
+    on_value:
+      then:
+        - lambda: |-
+            id(minimal_teen_mode) = (x == "Teen & Study Desk (12+)");
+            if (x == "Teen & Study Desk (12+)") id(use_24h_clock) = true;
+            else id(use_24h_clock) = ${default_use_24h};
+            id(force_redraw) = true;
+  - platform: template
+    id: ha_cal_priority
+    name: "Calendar Priority Mode"
+    optimistic: true
+    restore_value: true
+    initial_option: "Smart Auto"
+    options:
+      - "Smart Auto"
+      - "Today & Routine First"
+      - "Countdowns First"
+    on_value:
+      then:
+        - lambda: |-
+            id(cal_priority_mode) = (x == "Today & Routine First") ? 1 : ((x == "Countdowns First") ? 2 : 0);
+            id(force_redraw) = true;
+  - platform: template
+    id: ha_cal_style
+    name: "Calendar Display Style"
+    optimistic: true
+    restore_value: true
+    initial_option: "Subtle Ticker Only"
+    options:
+      - "Subtle Ticker Only"
+      - "Prominent Dock Card"
+      - "Morning Launchpad Takeover"
+    on_value:
+      then:
+        - lambda: |-
+            id(cal_display_style) = (x == "Prominent Dock Card") ? 1 : ((x == "Morning Launchpad Takeover") ? 2 : 0);
+            id(force_redraw) = true;
+
+button:
+  - platform: template
+    name: "Sync Calendars Now"
+    id: ha_sync_cal_btn
+    on_press:
+      then:
+        - lambda: 'world_clock::standalone_telemetry().cal_force_sync.store(true, std::memory_order_release);'
+  - platform: template
+    name: "Start Nap Mode Now"
+    on_press:
+      then:
+        - lambda: |-
+            uint32_t dur_ms = (uint32_t)std::clamp(id(ha_nap_minutes).state, 15.0f, 180.0f) * 60000UL;
+            id(nap_total_ms) = dur_ms;
+            id(nap_end_ms) = millis() + dur_ms;
+            if (id(nap_end_ms) == 0) id(nap_end_ms) = 1;
+            id(force_redraw) = true;
+  - platform: template
+    name: "Trigger Wind-Down Now"
+    on_press:
+      then:
+        - lambda: |-
+            auto now = id(clock_time).now();
+            id(nap_end_ms) = 0;
+            id(winddown_override_yday) = now.is_valid() ? now.day_of_year : 1;
+            id(force_redraw) = true;
+  - platform: template
+    name: "Cancel Nap or Wind-Down Override"
+    on_press:
+      then:
+        - lambda: |-
+            id(nap_end_ms) = 0;
+            id(winddown_override_yday) = -1;
+            id(force_redraw) = true;
+  - platform: template
+    name: "Start 25m Focus Study"
+    on_press:
+      then:
+        - lambda: |-
+            id(focus_is_break) = false;
+            id(focus_total_ms) = 25UL * 60000UL;
+            id(focus_end_ms) = millis() + id(focus_total_ms);
+            if (id(focus_end_ms) == 0) id(focus_end_ms) = 1;
+            id(force_redraw) = true;
+  - platform: template
+    name: "Start 5m Focus Break"
+    on_press:
+      then:
+        - lambda: |-
+            id(focus_is_break) = true;
+            id(focus_total_ms) = 5UL * 60000UL;
+            id(focus_end_ms) = millis() + id(focus_total_ms);
+            if (id(focus_end_ms) == 0) id(focus_end_ms) = 1;
+            id(force_redraw) = true;
+  - platform: template
+    name: "Stop Focus Timer"
+    on_press:
+      then:
+        - lambda: |-
+            id(focus_end_ms) = 0;
+            id(focus_rem_01) = -1.0f;
+            id(force_redraw) = true;
+
+switch:
+  - platform: template
+    id: ha_demo_mode
+    name: "Shop & Fayre Demo Mode"
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+    on_turn_on:  { then: [ lambda: 'id(demo_mode_active) = true; id(demo_mode_idx) = 0;' ] }
+    on_turn_off:
+      then:
+        - lambda: 'id(demo_mode_active) = false;'
+        - select.set: { id: occasion_select, option: "Auto" }
+  - platform: template
+    id: ha_tooth_fairy
+    name: "Tooth Fairy Tonight!"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:  { then: [ lambda: 'id(tooth_fairy_active) = true; id(force_redraw) = true;' ] }
+    on_turn_off: { then: [ lambda: 'id(tooth_fairy_active) = false; id(force_redraw) = true;' ] }
+  - platform: template
+    id: ha_weekend_en
+    name: "Enable Weekend Lie-In"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:  { then: [ lambda: 'id(sched_weekend_en) = true; id(force_redraw) = true;' ] }
+    on_turn_off: { then: [ lambda: 'id(sched_weekend_en) = false; id(force_redraw) = true;' ] }
+  - platform: template
+    id: ha_holiday_liein_en
+    name: "Include School Holidays in Lie-In"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:  { then: [ lambda: 'id(sched_holiday_liein_en) = true; id(force_redraw) = true;' ] }
+    on_turn_off: { then: [ lambda: 'id(sched_holiday_liein_en) = false; id(force_redraw) = true;' ] }
+  - platform: template
+    id: ha_late_bed_en
+    name: "Enable Non-School Night Late Bedtime"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:  { then: [ lambda: 'id(sched_late_bed_en) = true; id(force_redraw) = true;' ] }
+    on_turn_off: { then: [ lambda: 'id(sched_late_bed_en) = false; id(force_redraw) = true;' ] }
+  - platform: template
+    id: ha_sleep_stars_en
+    name: "Show 5 Sleep Countdown Stars"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:  { then: [ lambda: 'id(sched_sleep_stars_en) = true; id(force_redraw) = true;' ] }
+    on_turn_off: { then: [ lambda: 'id(sched_sleep_stars_en) = false; id(force_redraw) = true;' ] }
+
+datetime:
+  - platform: template
+    id: ha_school_leave_time
+    name: "Leave for School Time"
+    type: time
+    optimistic: true
+    restore_value: true
+    initial_value: "08:30:00"
+    on_value: { then: [ lambda: 'id(force_redraw) = true;' ] }
+  - platform: template
+    id: ha_countdown_date
+    name: "Custom Countdown Date"
+    type: date
+    optimistic: true
+    restore_value: true
+    initial_value: "2027-08-01"
+
+number:
+  - platform: template
+    id: ha_nap_minutes
+    name: "Nap Timer Duration"
+    min_value: 15
+    max_value: 180
+    step: 15
+    unit_of_measurement: "min"
+    optimistic: true
+    restore_value: true
+    initial_value: 60
+  - platform: template
+    id: ha_weekend_offset
+    name: "Weekend & Holiday Lie-In Offset"
+    min_value: 0
+    max_value: 90
+    step: 5
+    unit_of_measurement: "min"
+    optimistic: true
+    restore_value: true
+    initial_value: 60
+    on_value: { then: [ lambda: 'id(sched_weekend_offset_m) = (int)roundf(x); id(force_redraw) = true;' ] }
+  - platform: template
+    id: ha_late_bed_offset
+    name: "Non-School Night Late Bedtime Offset"
+    min_value: 0
+    max_value: 90
+    step: 5
+    unit_of_measurement: "min"
+    optimistic: true
+    restore_value: true
+    initial_value: 30
+    on_value: { then: [ lambda: 'id(sched_late_bed_offset_m) = (int)roundf(x); id(force_redraw) = true;' ] }
+
+text:
+  - platform: template
+    id: ha_parent_note
+    name: "Message of the Day"
+    mode: text
+    max_length: 44
+    optimistic: true
+    restore_value: false
+    initial_value: ""
+    on_value:
+      then:
+        - lambda: |-
+            auto now = id(clock_time).now();
+            id(parent_note_text) = x;
+            id(parent_note_yday) = now.is_valid() ? now.day_of_year : -1;
+  - platform: template
+    id: ha_family_cal_url
+    name: "Family Calendar URL (iCloud or Google .ics)"
+    mode: password
+    max_length: 250
+    optimistic: true
+    restore_value: true
+    initial_value: ""
+    on_value:
+      then:
+        - lambda: |-
+            auto &t = world_clock::standalone_telemetry();
+            t.ensure_mutex();
+            if (t.lock(pdMS_TO_TICKS(50))) {
+              snprintf(t.family_cal_url, sizeof(t.family_cal_url), "%s", x.c_str());
+              t.unlock();
+            }
+            t.cal_force_sync.store(true, std::memory_order_release);
+  - platform: template
+    id: ha_school_cal_url
+    name: "School Term & Holiday Calendar URL (.ics)"
+    mode: password
+    max_length: 250
+    optimistic: true
+    restore_value: true
+    initial_value: ""
+    on_value:
+      then:
+        - lambda: |-
+            auto &t = world_clock::standalone_telemetry();
+            t.ensure_mutex();
+            if (t.lock(pdMS_TO_TICKS(50))) {
+              snprintf(t.school_cal_url, sizeof(t.school_cal_url), "%s", x.c_str());
+              t.unlock();
+            }
+            t.cal_force_sync.store(true, std::memory_order_release);
+  - platform: template
+    id: ha_countdown_name
+    name: "Custom Countdown Name"
+    mode: text
+    max_length: 22
+    optimistic: true
+    restore_value: true
+    initial_value: ""
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          auto now = id(clock_time).now();
+          auto utc = id(clock_time).utcnow();
+
+          // Sync live Core 1 status & UTC offset into Core 0 NetWorker atomics (zero cross-core ESPHome calls!)
+          auto &t_cal = world_clock::standalone_telemetry();
+          t_cal.wifi_connected.store(id(wifi_conn).is_connected(), std::memory_order_release);
+          t_cal.time_valid.store(utc.is_valid(), std::memory_order_release);
+          if (now.is_valid() && utc.is_valid()) {
+            int64_t loc_min = world_clock::ymd_to_jdn(now.year, now.month, now.day_of_month) * 1440LL + now.hour * 60 + now.minute;
+            int64_t utc_min = world_clock::ymd_to_jdn(utc.year, utc.month, utc.day_of_month) * 1440LL + utc.hour * 60 + utc.minute;
+            t_cal.local_utc_offset_min.store((int)(loc_min - utc_min), std::memory_order_relaxed);
+          }
+
+          if (t_cal.try_lock()) {
+            if (now.is_valid()) {
+              t_cal.loc_year = now.year;
+              t_cal.loc_month = now.month;
+              t_cal.loc_day = now.day_of_month;
+            }
+            if (t_cal.cal_dirty) {
+              id(fam_cal_summary) = t_cal.family_cal;
+              id(sch_cal_summary) = t_cal.school_cal;
+              id(cal_today_event) = t_cal.family_cal.today_title;
+              id(cal_tomorrow_event) = t_cal.family_cal.tomorrow_title;
+              id(cal_next_event) = t_cal.family_cal.next_title;
+              id(cal_next_days) = t_cal.family_cal.next_days_away;
+              id(cal_school_configured) = (t_cal.school_cal_url[0] != '\0') || t_cal.family_cal.today_is_school_holiday;
+              id(cal_school_holiday) = t_cal.school_cal.today_is_school_holiday || t_cal.family_cal.today_is_school_holiday;
+              id(cal_school_note) = (t_cal.school_cal.school_note[0] != '\0') ? t_cal.school_cal.school_note : t_cal.family_cal.school_note;
+              t_cal.cal_dirty = false;
+              id(force_redraw) = true;
+            }
+            t_cal.unlock();
+          }
+
+          // Sync live Kids/Teen/Calendar HA entities into shared core state
+          id(sched_weekend_en) = id(ha_weekend_en).state;
+          id(sched_holiday_liein_en) = id(ha_holiday_liein_en).state;
+          id(sched_late_bed_en) = id(ha_late_bed_en).state;
+          id(sched_sleep_stars_en) = id(ha_sleep_stars_en).state;
+          id(sched_weekend_offset_m) = (int)roundf(std::isnan(id(ha_weekend_offset).state) ? 60.0f : id(ha_weekend_offset).state);
+          id(sched_late_bed_offset_m) = (int)roundf(std::isnan(id(ha_late_bed_offset).state) ? 30.0f : id(ha_late_bed_offset).state);
+
+          std::string cp_opt = id(ha_cal_priority).current_option();
+          id(cal_priority_mode) = (cp_opt == "Today & Routine First") ? 1 : ((cp_opt == "Countdowns First") ? 2 : 0);
+          std::string cs_opt = id(ha_cal_style).current_option();
+          id(cal_display_style) = (cs_opt == "Prominent Dock Card") ? 1 : ((cs_opt == "Morning Launchpad Takeover") ? 2 : 0);
+          id(minimal_teen_mode) = (id(ha_age_profile).current_option() == "Teen & Study Desk (12+)");
+          id(school_leave_min) = (int)id(ha_school_leave_time).hour * 60 + (int)id(ha_school_leave_time).minute;
+
+          id(active_cd_name) = id(ha_countdown_name).state;
+          if (now.is_valid() && !id(active_cd_name).empty() && id(ha_countdown_date).year > 2020) {
+            id(active_cd_days) = world_clock::days_between_ymd(
+                now.year, now.month, now.day_of_month,
+                (int)id(ha_countdown_date).year, (int)id(ha_countdown_date).month, (int)id(ha_countdown_date).day);
+          } else {
+            id(active_cd_days) = -1;
+          }
+
+          if (now.is_valid() && id(tooth_fairy_active) && now.hour == 12 && now.minute == 0 && now.second < 3) {
+            id(tooth_fairy_active) = false;
+            id(ha_tooth_fairy).publish_state(false);
+          }

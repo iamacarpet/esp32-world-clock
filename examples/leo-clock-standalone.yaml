@@ -40,3 +40,21 @@ packages:
   dock: !include ../packages/dock_weather.yaml
   core: !include ../packages/clock_core.yaml
   backend: !include ../packages/backend_standalone.yaml
+
+# Optional developer ESPHome CLI OTA (always password-protected; omitted from universal release binary!)
+ota:
+  - platform: esphome
+    id: ota_esphome
+    password: !secret ota_password
+    on_begin:
+      then:
+        - script.execute: ota_splash_begin
+    on_progress:
+      then:
+        - lambda: 'world_clock::ota_ui_state().pct.store((int)x, std::memory_order_relaxed);'
+    on_end:
+      then:
+        - script.execute: ota_splash_end
+    on_error:
+      then:
+        - script.execute: ota_splash_error

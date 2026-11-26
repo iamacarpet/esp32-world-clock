@@ -240,6 +240,174 @@ int main() {
   assert(weather_prep_hint("rainy", 9.0f, false) == "Warm Raincoat & Umbrella");
   assert(weather_prep_hint("sunny", 24.0f, false) == "Sun Hat, Suncream & Water");
 
+  // 9. v1.2 Overnight Circadian Continuity Across Midnight (Fri 20:15 -> Sat 00:15, Sun 20:15 -> Mon 00:15, & Post-Midnight Wrap)
+  // Friday night (today=Fri false, tomorrow=Sat true): at 20:15, {quiet} is ALREADY Sat's 05:00 (+60m lie-in)
+  assert(effective_cycle_quiet_m(20 * 60 + 15, sym, false, true) == 5 * 60);
+  assert(effective_cycle_quiet_m(0 * 60 + 15, sym, true, true) == 5 * 60);  // Sat 00:15 matches Fri 20:15!
+  float fri_2359 = sleep_phase_remaining_01(23 * 60 + 59, 1, sym, false, false, true, false);
+  float sat_0000 = sleep_phase_remaining_01(0, 1, sym, false, true, true, false);
+  assert(fri_2359 > sat_0000 && (fri_2359 - sat_0000) < 0.005f);  // Perfectly continuous across midnight!
+
+  // Sunday night (today=Sun true, tomorrow=Mon false): at 20:15, {quiet} is ALREADY Mon's early 04:00 (no lie-in)
+  assert(effective_cycle_quiet_m(20 * 60 + 15, sym, true, false) == 4 * 60);
+  assert(effective_cycle_quiet_m(0 * 60 + 15, sym, false, false) == 4 * 60);  // Mon 00:15 matches Sun 20:15!
+  float sun_2359 = sleep_phase_remaining_01(23 * 60 + 59, 1, sym, false, true, false, false);
+  float mon_0000 = sleep_phase_remaining_01(0, 1, sym, false, false, false, false);
+  assert(sun_2359 > mon_0000 && (sun_2359 - mon_0000) < 0.005f);
+
+  // Post-midnight bedtime wrap (23:30 + 60m = 00:30 on NYE -> Jan 1 00:15 still Wind-Down via is_yesterday_special_night!)
+  ScheduleConfig wrap_cfg;
+  wrap_cfg.winddown_enabled = true;
+  wrap_cfg.sleep_enabled = true;
+  wrap_cfg.quiet_enabled = false;
+  wrap_cfg.winddown_m = 23 * 60;      // 23:00
+  wrap_cfg.bedtime_m = 23 * 60 + 30;  // 23:30
+  wrap_cfg.wakeup_m = 7 * 60;         // 07:00
+  wrap_cfg.special_delay_m = 60;      // NYE -> 00:00 wind-down, 00:30 bedtime!
+  assert(evaluate_schedule(23 * 60 + 45, wrap_cfg, true, false, false, false) == 0);  // Dec 31 23:45 still Day
+  assert(evaluate_schedule(0 * 60 + 15, wrap_cfg, false, false, false, true) == 3);   // Jan 1 00:15 Wind-Down!
+  assert(evaluate_schedule(0 * 60 + 30, wrap_cfg, false, false, false, true) == 1);   // Jan 1 00:30 Deep Sleep!
+
+  // 1st-of-month birthday countdown & year rollover (Dec 25 -> Jan 1 = 7 sleeps!)
+  assert(days_until_next_birthday(2026, 12, 25, 1, 1) == 7);
+  assert(days_until_next_birthday(2026, 5, 25, 6, 1) == 7);
+  assert(days_until_next_birthday(2026, 6, 1, 6, 1) == 0);
+
+  // 10. v1.2 Security: HTTPS-only URL Normalization, SSRF Rejection, Bounded JSON & Random Password
+  assert(!normalize_calendar_url("http://example.com/cal.ics", norm, sizeof(norm)));
+  assert(!normalize_calendar_url("https://localhost/cal.ics", norm, sizeof(norm)));
+  assert(!normalize_calendar_url("https://192.168.1.50/cal.ics", norm, sizeof(norm)));
+  assert(!normalize_calendar_url("https://10.0.0.1/cal.ics", norm, sizeof(norm)));
+  assert(!normalize_calendar_url("https://169.254.169.254/latest/meta-data", norm, sizeof(norm)));
+  assert(!normalize_calendar_url("https://[::1]/cal.ics", norm, sizeof(norm)));
+  assert(!normalize_calendar_url("https://[fd00::1]/cal.ics", norm, sizeof(norm)));
+  assert(!normalize_calendar_url("https://user:pass@calendar.google.com/a.ics", norm, sizeof(norm)));
+  assert(normalize_calendar_url("https://calendar.google.com/calendar/ical/abc/basic.ics", norm, sizeof(norm)));
+
+  // Bounded JSON extraction (missing key in "current" must NOT scan into "daily"!)
+  const char *kWxJson = "{\"current\":{\"temperature_2m\":12.5},\"daily\":{\"apparent_temperature\":99.0}}";
+  const char *cur_s = strstr(kWxJson, "\"current\"");
+  const char *cur_e = find_json_object_end(cur_s);
+  assert(cur_e != nullptr);
+  float tmp_v = 0.0f;
+  assert(extract_json_num_bounded(cur_s, cur_e, "\"temperature_2m\"", tmp_v) && fabsf(tmp_v - 12.5f) < 1e-3f);
+  assert(!extract_json_num_bounded(cur_s, cur_e, "\"apparent_temperature\"", tmp_v));
+  assert(json_key_equals_str("{\"visibility\": \"eclipsed\"}", "\"visibility\"", "eclipsed"));
+  assert(!json_key_equals_str("{\"visibility\": \"daylight\", \"note\": \"eclipsed\"}", "\"visibility\"", "eclipsed"));
+
+  // Random setup password format (8 lowercase unambiguous alphanumeric chars)
+  std::string rp1 = format_random_setup_password(0x123456789ABCDEF0ULL);
+  std::string rp2 = format_random_setup_password(0xFEDCBA9876543210ULL);
+  assert(rp1.size() == 8 && rp2.size() == 8 && rp1 != rp2);
+
+  // 11. v1.2 RFC 5545 .ics Edge Cases: UTC 'Z' Conversion, Quote-Aware Colons, STATUS:CANCELLED,
+  //     Smart Quotes/Dashes, Midnight 00:00 Timed Event, Multi-Day Timed Event, Keyword Tightening,
+  //     1-Sleep Countdown & Adjacent Half-Term + Monday INSET Day 64-Day Bitmask!
+  const char *kEdgeIcs =
+      "BEGIN:VCALENDAR\r\n"
+      "BEGIN:VEVENT\r\n"
+      "DTSTART:20260715T150000Z\r\n"
+      "SUMMARY;ALTREP=\"https://school.org/info\":Swimming Lesson\r\n"
+      "END:VEVENT\r\n"
+      "BEGIN:VEVENT\r\n"
+      "DTSTART:20260715T120000Z\r\n"
+      "STATUS:CANCELLED\r\n"
+      "SUMMARY:Cancelled Dentist\r\n"
+      "END:VEVENT\r\n"
+      "BEGIN:VEVENT\r\n"
+      "DTSTART:20260715T000000\r\n"
+      "SUMMARY:Leo\xE2\x80\x99s Party \xE2\x80\x93 3pm\r\n"
+      "END:VEVENT\r\n"
+      "BEGIN:VEVENT\r\n"
+      "DTSTART:20260714T160000\r\n"
+      "DTEND:20260716T120000\r\n"
+      "SUMMARY:Camping Weekend\r\n"
+      "END:VEVENT\r\n"
+      "BEGIN:VEVENT\r\n"
+      "DTSTART;VALUE=DATE:20260716\r\n"
+      "SUMMARY:Countdown: Holiday Flight\r\n"
+      "END:VEVENT\r\n"
+      "END:VCALENDAR\r\n";
+
+  // BST (+60 min): 15:00Z -> 16:00 (4 PM); 00:00 stays timed; Camping Weekend (started Jul 14) is allday on Jul 15!
+  IcsStreamParser bst(2026, 7, 15, false, +60);
+  bst.feed(kEdgeIcs, strlen(kEdgeIcs));
+  bst.finish();
+  assert(bst.summary().valid);
+  assert(bst.summary().today_timed[0].valid && bst.summary().today_timed[0].minute_of_day == 0);
+  assert(std::string(bst.summary().today_timed[0].title) == "Leo's Party - 3pm");
+  assert(bst.summary().today_timed[1].valid && bst.summary().today_timed[1].minute_of_day == 16 * 60);
+  assert(std::string(bst.summary().today_timed[1].title) == "Swimming Lesson");
+  // Multi-day timed event does NOT repeat 16:00 on Day 2 (classified into today_allday!)
+  assert(std::string(bst.summary().today_allday) == "Camping Weekend");
+  // 1-sleep priority countdown works!
+  assert(bst.summary().countdowns[0].valid && bst.summary().countdowns[0].days_away == 1);
+  assert(std::string(bst.summary().countdowns[0].title) == "Holiday Flight");
+
+  // US EDT (-240 min): 15:00Z -> 11:00 AM, and 02:00Z on Jul 16 shifts back to 22:00 on Jul 15!
+  const char *kUtcShiftIcs =
+      "BEGIN:VCALENDAR\r\n"
+      "BEGIN:VEVENT\r\n"
+      "DTSTART:20260715T150000Z\r\n"
+      "SUMMARY:Morning Club\r\n"
+      "END:VEVENT\r\n"
+      "BEGIN:VEVENT\r\n"
+      "DTSTART:20260716T020000Z\r\n"
+      "SUMMARY:Late Match\r\n"
+      "END:VEVENT\r\n"
+      "END:VCALENDAR\r\n";
+  IcsStreamParser edt(2026, 7, 15, false, -240);
+  edt.feed(kUtcShiftIcs, strlen(kUtcShiftIcs));
+  edt.finish();
+  assert(edt.summary().today_timed[0].valid && edt.summary().today_timed[0].minute_of_day == 11 * 60);
+  assert(edt.summary().today_timed[1].valid && edt.summary().today_timed[1].minute_of_day == 22 * 60);
+  assert(std::string(edt.summary().today_timed[1].title) == "Late Match");
+
+  // Tightened holiday keywords + Adjacent Half Term (Oct 26..30) + Monday INSET (Nov 2) -> Back to school Tue Nov 3!
+  const char *kAdjSchoolIcs =
+      "BEGIN:VCALENDAR\r\n"
+      "BEGIN:VEVENT\r\n"
+      "DTSTART;VALUE=DATE:20261028\r\n"
+      "SUMMARY:After-School Club Booking Closed\r\n"
+      "END:VEVENT\r\n"
+      "BEGIN:VEVENT\r\n"
+      "DTSTART;VALUE=DATE:20261102\r\n"
+      "SUMMARY:INSET Day\r\n"
+      "END:VEVENT\r\n"
+      "BEGIN:VEVENT\r\n"
+      "DTSTART;VALUE=DATE:20261026\r\n"
+      "DTEND;VALUE=DATE:20261031\r\n"
+      "SUMMARY:Autumn Half Term\r\n"
+      "END:VEVENT\r\n"
+      "END:VCALENDAR\r\n";
+  // Notice VEVENTs are deliberately out-of-order (Nov 2 INSET before Oct 26..30 Half Term)!
+  // On Wed Oct 28: Oct 29-30 (Hol), Oct 31-Nov 1 (Sat/Sun), Nov 2 (INSET) -> First school day is Tue Nov 3 (6 sleeps)!
+  IcsStreamParser sch_adj(2026, 10, 28, true);
+  sch_adj.feed(kAdjSchoolIcs, strlen(kAdjSchoolIcs));
+  sch_adj.finish();
+  assert(sch_adj.summary().today_is_school_holiday);
+  assert(sch_adj.summary().back_to_school_days == 6);
+
+  // "After-School Club Booking Closed" alone must NOT trigger a school holiday!
+  const char *kFalsePosIcs =
+      "BEGIN:VCALENDAR\r\n"
+      "BEGIN:VEVENT\r\n"
+      "DTSTART;VALUE=DATE:20261015\r\n"
+      "SUMMARY:After-School Club Booking Closed\r\n"
+      "END:VEVENT\r\n"
+      "BEGIN:VEVENT\r\n"
+      "DTSTART;VALUE=DATE:20261015\r\n"
+      "SUMMARY:Holiday Club Deposit Deadline\r\n"
+      "END:VEVENT\r\n"
+      "END:VCALENDAR\r\n";
+  IcsStreamParser sch_fp(2026, 10, 15, true);
+  sch_fp.feed(kFalsePosIcs, strlen(kFalsePosIcs));
+  sch_fp.finish();
+  assert(!sch_fp.summary().today_is_school_holiday);
+
+  // Accented UTF-8 uppercasing
+  assert(to_upper_ascii("Caf\xC3\xA9") == "CAF\xC3\x89");
+
   printf("ALL CLOCK_MATH & ICS_PARSER UNIT TESTS PASSED!\n");
   return 0;
 }

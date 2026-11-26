@@ -96,6 +96,16 @@ globals:
   - { id: focus_title, type: std::string, restore_value: no, initial_value: '""' }
   - { id: focus_sub, type: std::string, restore_value: no, initial_value: '""' }
   - { id: minimal_teen_mode, type: bool, restore_value: no, initial_value: 'false' }
+  # Shared Custom Countdown + Wake-Up & Kids Schedule State (populated by Standalone or ha_kids_calendar.yaml)
+  - { id: active_cd_name, type: std::string, restore_value: no, initial_value: '""' }
+  - { id: active_cd_days, type: int, restore_value: no, initial_value: '-1' }
+  - { id: eff_wakeup_min_today, type: int, restore_value: no, initial_value: '390' }
+  - { id: sched_weekend_en, type: bool, restore_value: no, initial_value: 'false' }
+  - { id: sched_holiday_liein_en, type: bool, restore_value: no, initial_value: 'true' }
+  - { id: sched_late_bed_en, type: bool, restore_value: no, initial_value: 'false' }
+  - { id: sched_weekend_offset_m, type: int, restore_value: no, initial_value: '60' }
+  - { id: sched_late_bed_offset_m, type: int, restore_value: no, initial_value: '30' }
+  - { id: sched_sleep_stars_en, type: bool, restore_value: no, initial_value: 'true' }
 
 select:
   - platform: template
@@ -136,34 +146,25 @@ select:
               - script.stop: preview_revert_timer
 
 script:
+  # Lock-free, cross-task safe OTA hooks: NEVER call lv_* or lv_timer_handler() from async HTTP/OTA tasks!
+  # Core 1's 100ms interval consumes world_clock::ota_ui_state() and updates LVGL safely on the main loop.
   - id: ota_splash_begin
     mode: single
     then:
       - lambda: |-
           __atomic_store_n(&id(ota_active), true, __ATOMIC_RELEASE);
           #if defined(USE_WORLD_CLOCK_NET_WORKER)
-            __atomic_store_n(&world_clock::standalone_telemetry().ota_active, true, __ATOMIC_RELEASE);
+            world_clock::standalone_telemetry().ota_active.store(true, std::memory_order_release);
           #endif
-          id(last_ota_pct) = -5;
-          #if LVGL_VERSION_MAJOR >= 9
-            lv_obj_remove_flag(id(splash_overlay), LV_OBJ_FLAG_HIDDEN);
-          #else
-            lv_obj_clear_flag(id(splash_overlay), LV_OBJ_FLAG_HIDDEN);
-          #endif
-          lv_obj_add_flag(id(splash_qr_box), LV_OBJ_FLAG_HIDDEN);
-          lv_label_set_text(id(splash_title), "UPDATING CLOCK... 0%");
-          lv_label_set_text(id(splash_sub), "Installing wireless update  \u2192  Keep power connected");
-          lv_label_set_text(id(splash_hint), "");
-          lv_bar_set_value(id(splash_bar), 0, LV_ANIM_OFF);
-          lv_timer_handler();
+          world_clock::ota_ui_state().pct.store(0, std::memory_order_relaxed);
+          world_clock::ota_ui_state().state.store(1, std::memory_order_release);
 
   - id: ota_splash_end
     mode: single
     then:
       - lambda: |-
-          lv_label_set_text(id(splash_title), "UPDATE COMPLETE  \u2192  REBOOTING!");
-          lv_bar_set_value(id(splash_bar), 100, LV_ANIM_OFF);
-          lv_timer_handler();
+          world_clock::ota_ui_state().pct.store(100, std::memory_order_relaxed);
+          world_clock::ota_ui_state().state.store(2, std::memory_order_release);
 
   - id: ota_splash_error
     mode: single
@@ -171,9 +172,9 @@ script:
       - lambda: |-
           __atomic_store_n(&id(ota_active), false, __ATOMIC_RELEASE);
           #if defined(USE_WORLD_CLOCK_NET_WORKER)
-            __atomic_store_n(&world_clock::standalone_telemetry().ota_active, false, __ATOMIC_RELEASE);
+            world_clock::standalone_telemetry().ota_active.store(false, std::memory_order_release);
           #endif
-          id(overlay_state) = 255;
+          world_clock::ota_ui_state().state.store(3, std::memory_order_release);
 
   - id: preview_revert_timer
     mode: restart
@@ -307,7 +308,7 @@ script:
               fam_use, sch_use,
               id(cal_school_configured) || is_hol || preview_school || preview_hol, is_wknd, now_m,
               id(cal_priority_mode), (now.is_valid() ? now.second / 12 : 0),
-              id(use_24h_clock), "", -1);
+              id(use_24h_clock), id(active_cd_name), id(active_cd_days));
 
           // 1. Top School Status Pill & Leave-for-School Countdown Bar
           std::string badge = cv.school_badge.empty() ? (is_non_school ? "NO SCHOOL DAY" : "SCHOOL DAY") : cv.school_badge;
@@ -407,6 +408,44 @@ interval:
   - interval: 100ms
     then:
       - lambda: |-
+          // Core 1 LVGL-thread-safe OTA splash consumer (never touched from async HTTP/OTA tasks!)
+          {
+            static uint8_t s_ota_ui_state = 0;
+            static int s_ota_ui_pct = -1;
+            uint8_t st = world_clock::ota_ui_state().state.load(std::memory_order_acquire);
+            if (st != 0) {
+              int pct = std::clamp(world_clock::ota_ui_state().pct.load(std::memory_order_relaxed), 0, 100);
+              if (st == 1 && (s_ota_ui_state != 1 || pct >= s_ota_ui_pct + 5 || pct >= 99)) {
+                if (s_ota_ui_state != 1) {
+                  #if LVGL_VERSION_MAJOR >= 9
+                    lv_obj_remove_flag(id(splash_overlay), LV_OBJ_FLAG_HIDDEN);
+                  #else
+                    lv_obj_clear_flag(id(splash_overlay), LV_OBJ_FLAG_HIDDEN);
+                  #endif
+                  lv_obj_add_flag(id(splash_qr_box), LV_OBJ_FLAG_HIDDEN);
+                  lv_label_set_text(id(splash_sub), "Installing wireless update  \u2192  Keep power connected");
+                  lv_label_set_text(id(splash_hint), "");
+                }
+                char obuf[48];
+                snprintf(obuf, sizeof(obuf), "UPDATING CLOCK... %d%%", pct);
+                lv_label_set_text(id(splash_title), obuf);
+                lv_bar_set_value(id(splash_bar), pct, LV_ANIM_OFF);
+                s_ota_ui_state = 1;
+                s_ota_ui_pct = pct;
+              } else if (st == 2 && s_ota_ui_state != 2) {
+                lv_label_set_text(id(splash_title), "UPDATE COMPLETE  \u2192  REBOOTING!");
+                lv_bar_set_value(id(splash_bar), 100, LV_ANIM_OFF);
+                s_ota_ui_state = 2;
+              } else if (st == 3) {
+                world_clock::ota_ui_state().state.store(0, std::memory_order_release);
+                s_ota_ui_state = 0;
+                s_ota_ui_pct = -1;
+                id(overlay_state) = 255;
+                lv_obj_add_flag(id(splash_overlay), LV_OBJ_FLAG_HIDDEN);
+              }
+              return;
+            }
+          }
           if (__atomic_load_n(&id(ota_active), __ATOMIC_ACQUIRE) || !id(boot_complete) || id(bg_cache) == nullptr || id(launchpad_visible)) return;
           auto utc = id(clock_time).utcnow();
           auto loc = id(clock_time).now();

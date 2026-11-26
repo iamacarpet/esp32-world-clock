@@ -79,6 +79,7 @@ inline void render_weather_dock_canvas(const WeatherDockWidgets &w, uint8_t *&bg
 
   uint8_t *bg = ensure_bg_cache(bg_cache);
   if (bg == nullptr) return;
+  static_assert(kScratchBytes >= 64UL * 64UL * 3UL, "kScratchBytes too small for 64x64 weather dock icon pad");
   uint8_t *s_pad = bg + kBgBytes;
 
 #if LVGL_VERSION_MAJOR >= 9

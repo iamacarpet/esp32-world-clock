@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag name (e.g. v1.0.0)"
+        description: "Release tag name (e.g. v1.2.0)"
         required: true
         default: "v0.1.0-test"
 
@@ -22,24 +22,32 @@ jobs:
     name: Build Universal Standalone Firmware & Publish Release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
 
-      - name: Determine release tag
+      - name: Determine & strictly validate release tag
         id: meta
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ inputs.tag }}"
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            TAG="${INPUT_TAG}"
           else
-            TAG="${GITHUB_REF_NAME}"
+            TAG="${REF_NAME}"
+          fi
+          if ! [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
+            echo "::error::Invalid release tag '${TAG}' (expected semver like v1.2.0)"
+            exit 1
           fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
-      - name: Run C++ unit tests
+      - name: Run C++ unit tests (ASan + UBSan)
         run: |
-          g++ -std=c++17 -Wall -Wextra -Werror -Icomponents/world_clock tests/test_clock_math.cpp -o /tmp/test_clock_math
+          g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -Icomponents/world_clock tests/test_clock_math.cpp -o /tmp/test_clock_math
           /tmp/test_clock_math
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: "3.12"
 
@@ -49,7 +57,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends ninja-build imagemagick fonts-dejavu-core ffmpeg
 
       - name: Cache PlatformIO & ESP-IDF toolchains
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
         with:
           path: |
             ~/.platformio
@@ -62,7 +70,7 @@ jobs:
       - name: Install ESPHome ${{ env.ESPHOME_VERSION }}
         run: pip install --no-cache-dir "esphome==${{ env.ESPHOME_VERSION }}"
 
-      - name: Stage release credentials (Captive Portal AP & default Web UI login)
+      - name: Stage release credentials (Captive Portal AP & placeholder Web UI secret overridden on first boot via esp_random)
         run: |
           cat > examples/secrets.yaml <<'EOF'
           wifi_ssid: "unused"
@@ -79,8 +87,9 @@ jobs:
         run: python3 scripts/run_emulator.py --out sim_output --video-seconds 30
 
       - name: Package release assets
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
         run: |
-          TAG="${{ steps.meta.outputs.tag }}"
           mkdir -p release_assets
           OTA_BIN=$(find examples/.esphome/build/world-clock -name "firmware.ota.bin" | head -n 1)
           FAC_BIN=$(find examples/.esphome/build/world-clock -name "firmware.factory.bin" | head -n 1)
@@ -96,7 +105,7 @@ jobs:
           ls -lh release_assets/
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: "World & Space Clock ${{ steps.meta.outputs.tag }}"
@@ -106,23 +115,23 @@ jobs:
 
             No ESPHome installation or Home Assistant required!
 
-            ### Multi-Device Ready (Hardware MAC Auto-Identity)
+            ### Multi-Device Ready & Hardened Security
             You can run **multiple clocks in the same home** from this single `.bin` file with zero collisions:
             - **Unique Hostname**: `http://world-clock-<mac6>.local/`
             - **Unique Setup Hotspot**: `world-clock-<mac6>` (password: `ClockSetup123`)
-            - **Unique Web Settings Login**: username `parent`, password `clock-<mac6>`
-            - **Zero Setup Card Needed**: Unplug & plug in any clock at any time — its exact URL, IP address, and `parent / clock-<mac6>` login are displayed right on the 5-inch boot screen!
+            - **Unique Random Web Settings Login**: username `parent` with a **cryptographically random 8-character password** generated via `esp_random()` on first boot, persisted in NVS, and shown **only on the physical 5-inch boot screen** (never derived from broadcast MAC/mDNS; TCP port 3232 is disabled).
+            - **Zero Setup Card Needed**: Unplug & plug in any clock during daytime/evening to see its exact URL, IP address, sleep-safe red QR code, and unique login right on the screen!
 
             ### Updating an Existing Clock Wirelessly (iPhone / Laptop)
             1. Download **`world-clock-standalone-${{ steps.meta.outputs.tag }}-ota.bin`** below.
-            2. Open your clock's URL (`http://world-clock-<mac6>.local/` or its IP address) in Safari/Chrome and sign in (`parent` / `clock-<mac6>`).
+            2. Open your clock's URL (`http://world-clock-<mac6>.local/` or its IP address) in Safari/Chrome and sign in with `parent` and the 8-character password shown on your clock's boot screen.
             3. Scroll to **OTA Update**, choose the `-ota.bin` file you just downloaded, and tap **Update**.
-            4. Your saved Wi-Fi, child's name, birth date, location, 4-phase sleep schedule, brightness, and custom wording are all preserved automatically!
+            4. Your saved Wi-Fi, random Web UI password, child's name, birth date, location, 4-phase sleep schedule, calendars, brightness, and custom wording are all preserved automatically!
 
             ### First-Time USB Flash (Brand-New Display)
             1. Flash **`world-clock-standalone-${{ steps.meta.outputs.tag }}-factory.bin`** at offset `0x0` using [ESP Web Tools](https://web.esphome.io/) or `esptool.py`.
             2. Power on the clock — after 15 seconds it opens its unique setup Wi-Fi hotspot (`world-clock-<mac6>`, password `ClockSetup123`), shown right on the screen.
             3. Join that hotspot on your phone to connect the clock to your home Wi-Fi.
-            4. Once connected, read the URL and login shown on the boot screen to customize the child's name, birth date, location, sleep schedule, and messages.
+            4. Once connected, scan the sleep-safe red QR code or read the URL and random login shown on the boot screen to customize the clock.
           files: |
             release_assets/*

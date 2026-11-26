@@ -159,9 +159,16 @@ def main():
 
     video_secs = max(3, min(60, args.video_seconds))
     out_dir = Path(args.out).resolve()
-    if out_dir.exists():
-        shutil.rmtree(out_dir)
+    protected_dirs = {REPO_ROOT.resolve(), Path.home().resolve(), Path("/")}
+    repo_markers = {".git", "packages", "components", "docs", "examples", "sim"}
+    if out_dir in protected_dirs or any((out_dir / m).exists() for m in repo_markers):
+        raise ValueError(f"Refusing to write/clean emulator output inside protected directory: {out_dir}")
     out_dir.mkdir(parents=True, exist_ok=True)
+    # Safely clean only known emulator output artifacts inside out_dir (never rmtree arbitrary trees!)
+    for pat in ("*.bmp", "*.png", "*.gif", "*.mp4", "_concat.txt", "_row_*.png"):
+        for old_f in out_dir.glob(pat):
+            if old_f.is_file():
+                old_f.unlink()
 
     esphome_cmd = find_esphome_cmd()
     env = os.environ.copy()

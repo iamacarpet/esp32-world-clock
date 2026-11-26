@@ -9,8 +9,101 @@
 
 namespace world_clock {
 
+// Checks whether a parsed IPv4 address (host byte order or 4 octets) is private, loopback,
+// link-local, CGNAT, multicast, or unspecified (SSRF protection).
+inline bool is_private_ipv4_octets(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
+  (void)c;
+  (void)d;
+  if (a == 0 || a == 10 || a == 127) return true;                          // 0/8, 10/8, 127/8
+  if (a == 100 && (b >= 64 && b <= 127)) return true;                      // 100.64.0.0/10 CGNAT
+  if (a == 169 && b == 254) return true;                                   // 169.254.0.0/16 Link-local
+  if (a == 172 && (b >= 16 && b <= 31)) return true;                       // 172.16.0.0/12 RFC1918
+  if (a == 192 && b == 168) return true;                                   // 192.168.0.0/16 RFC1918
+  if (a == 192 && b == 0 && (c == 0 || c == 2)) return true;               // 192.0.0/24, 192.0.2/24
+  if (a == 198 && (b == 18 || b == 19)) return true;                       // 198.18.0.0/15 benchmark
+  if (a >= 224) return true;                                               // Multicast & reserved
+  return false;
+}
+
+// Extracts the lowercase hostname from an https:// URL into `host_out`, rejecting userinfo ('@'),
+// control chars, and malformed authorities.
+inline bool extract_https_host(const char *url, char *host_out, size_t host_cap) {
+  if (url == nullptr || host_out == nullptr || host_cap < 4) return false;
+  host_out[0] = '\0';
+  if (strncasecmp(url, "https://", 8) != 0) return false;
+  const char *p = url + 8;
+  const char *auth_end = p;
+  while (*auth_end != '\0' && *auth_end != '/' && *auth_end != '?' && *auth_end != '#') {
+    if ((unsigned char)*auth_end <= 32 || *auth_end == '@' || *auth_end == '\\') return false;
+    auth_end++;
+  }
+  if (auth_end == p) return false;
+
+  const char *h_start = p;
+  const char *h_end = auth_end;
+  if (*h_start == '[') {
+    // IPv6 literal [::1]
+    const char *rb = (const char *)memchr(h_start, ']', (size_t)(auth_end - h_start));
+    if (rb == nullptr || rb == h_start + 1) return false;
+    h_start++;
+    h_end = rb;
+  } else {
+    const char *colon = (const char *)memchr(h_start, ':', (size_t)(auth_end - h_start));
+    if (colon != nullptr) h_end = colon;
+  }
+  size_t hlen = (size_t)(h_end - h_start);
+  if (hlen == 0 || hlen + 1 >= host_cap) return false;
+  for (size_t i = 0; i < hlen; i++) {
+    host_out[i] = (char)tolower((unsigned char)h_start[i]);
+  }
+  host_out[hlen] = '\0';
+  return true;
+}
+
+// Validates that `url` is a clean public HTTPS URL (blocks http://, localhost, .local, LAN/RFC1918/IPv6-ULA literals).
+inline bool is_public_https_url(const char *url) {
+  if (url == nullptr) return false;
+  for (const char *p = url; *p != '\0'; p++) {
+    if ((unsigned char)*p <= 32 || (unsigned char)*p >= 127) return false;
+  }
+  char host[128];
+  if (!extract_https_host(url, host, sizeof(host))) return false;
+  size_t hlen = strlen(host);
+  if (hlen == 0) return false;
+  while (hlen > 0 && host[hlen - 1] == '.') host[--hlen] = '\0';
+  if (hlen == 0) return false;
+
+  if (strcmp(host, "localhost") == 0) return false;
+  if (hlen > 10 && strcmp(host + hlen - 10, ".localhost") == 0) return false;
+  if (hlen > 6 && strcmp(host + hlen - 6, ".local") == 0) return false;
+  if (hlen > 5 && strcmp(host + hlen - 5, ".home") == 0) return false;
+  if (hlen > 4 && strcmp(host + hlen - 4, ".lan") == 0) return false;
+  if (hlen > 9 && strcmp(host + hlen - 9, ".internal") == 0) return false;
+
+  // Reject IPv6 literals pointing to loopback/ULA/link-local/unspecified/IPv4-mapped
+  if (strchr(host, ':') != nullptr) {
+    if (strcmp(host, "::1") == 0 || strcmp(host, "::") == 0) return false;
+    if (strncmp(host, "fc", 2) == 0 || strncmp(host, "fd", 2) == 0) return false;
+    if (strncmp(host, "fe8", 3) == 0 || strncmp(host, "fe9", 3) == 0 || strncmp(host, "fea", 3) == 0 ||
+        strncmp(host, "feb", 3) == 0)
+      return false;
+    if (strncmp(host, "ff", 2) == 0 || strncmp(host, "::ffff:", 7) == 0) return false;
+    return true;
+  }
+
+  // Reject dotted-quad private/loopback/link-local/CGNAT IPv4 literals
+  unsigned a = 0, b = 0, c = 0, d = 0;
+  char extra = 0;
+  if (sscanf(host, "%u.%u.%u.%u%c", &a, &b, &c, &d, &extra) == 4 && a <= 255 && b <= 255 && c <= 255 && d <= 255) {
+    return !is_private_ipv4_octets((uint8_t)a, (uint8_t)b, (uint8_t)c, (uint8_t)d);
+  }
+  // Reject bare numeric hosts (decimal/octal/hex IPv4 obfuscation like 2130706433 or 0x7f000001)
+  if (strchr(host, '.') == nullptr) return false;
+  return true;
+}
+
 // Normalizes iCloud / Apple / Google / School calendar URLs:
-// Trims whitespace and rewrites webcal:// or webcals:// -> https:// so parents can paste directly!
+// Trims whitespace, rewrites webcal:// or webcals:// -> https://, and rejects plaintext http:// & private LAN hosts!
 inline bool normalize_calendar_url(const char *raw, char *out, size_t cap) {
   if (raw == nullptr || out == nullptr || cap < 16) return false;
   out[0] = '\0';
@@ -21,19 +114,25 @@ inline bool normalize_calendar_url(const char *raw, char *out, size_t cap) {
   }
   if (len < 10) return false;
 
+  int w = -1;
   if (len > 9 && strncasecmp(raw, "webcal://", 9) == 0) {
-    int w = snprintf(out, cap, "https://%.*s", (int)(len - 9), raw + 9);
-    return (w > 0 && (size_t)w < cap);
+    w = snprintf(out, cap, "https://%.*s", (int)(len - 9), raw + 9);
+  } else if (len > 10 && strncasecmp(raw, "webcals://", 10) == 0) {
+    w = snprintf(out, cap, "https://%.*s", (int)(len - 10), raw + 10);
+  } else if (strncasecmp(raw, "https://", 8) == 0) {
+    w = snprintf(out, cap, "%.*s", (int)len, raw);
+  } else {
+    return false;  // Reject plaintext http:// and unknown schemes!
   }
-  if (len > 10 && strncasecmp(raw, "webcals://", 10) == 0) {
-    int w = snprintf(out, cap, "https://%.*s", (int)(len - 10), raw + 10);
-    return (w > 0 && (size_t)w < cap);
+  if (w <= 0 || (size_t)w >= cap) {
+    out[0] = '\0';
+    return false;
   }
-  if (strncasecmp(raw, "https://", 8) == 0 || strncasecmp(raw, "http://", 7) == 0) {
-    int w = snprintf(out, cap, "%.*s", (int)len, raw);
-    return (w > 0 && (size_t)w < cap);
+  if (!is_public_https_url(out)) {
+    out[0] = '\0';
+    return false;
   }
-  return false;
+  return true;
 }
 
 struct TimedEvent {
@@ -170,9 +269,10 @@ inline CalendarView build_calendar_view(const IcsFeedSummary &fam, const IcsFeed
     cd_pool[cd_n++] = cb;
   }
   for (int i = 0; i < 2 && cd_n < 3; i++) {
-    if (fam.countdowns[i].valid && fam.countdowns[i].days_away >= 2) {
+    if (fam.countdowns[i].valid && fam.countdowns[i].days_away >= 1) {
       char cb[56];
-      snprintf(cb, sizeof(cb), "%d SLEEPS TO %s!", fam.countdowns[i].days_away,
+      snprintf(cb, sizeof(cb), "%d %s TO %s!", fam.countdowns[i].days_away,
+               (fam.countdowns[i].days_away == 1) ? "SLEEP" : "SLEEPS",
                to_upper_ascii(fam.countdowns[i].title).c_str());
       cd_pool[cd_n++] = cb;
     }
@@ -195,6 +295,11 @@ inline CalendarView build_calendar_view(const IcsFeedSummary &fam, const IcsFeed
   if (!tmrw_str.empty() && pl < 3) v.plan_lines[pl++] = tmrw_str;
   if (!active_cd.empty() && pl < 3) v.plan_lines[pl++] = active_cd;
   if (pl == 0) v.plan_lines[0] = is_hol || is_weekend ? "FREE DAY · NO EVENTS SCHEDULED" : "REGULAR SCHOOL DAY";
+
+  // If no school holiday badge is active, promote the custom UI / priority countdown to the Launchpad pill!
+  if (v.holiday_badge.empty() && !active_cd.empty()) {
+    v.holiday_badge = active_cd;
+  }
 
   // Build Prominent Dock Card title + subtitle
   if (!active_timed_str.empty()) {
@@ -265,8 +370,12 @@ inline CalendarView build_calendar_view(const IcsFeedSummary &fam, const IcsFeed
 // Handles multi-megabyte iCloud / Google / School feeds using < 2 KB of stack/member memory!
 class IcsStreamParser {
  public:
-  IcsStreamParser(int cur_y, int cur_m, int cur_d, bool is_school_feed = false)
-      : cur_y_(cur_y), cur_m_(cur_m), cur_d_(cur_d), is_school_(is_school_feed) {
+  IcsStreamParser(int cur_y, int cur_m, int cur_d, bool is_school_feed = false, int local_utc_offset_min = 0)
+      : cur_y_(cur_y),
+        cur_m_(cur_m),
+        cur_d_(cur_d),
+        is_school_(is_school_feed),
+        local_utc_offset_min_(local_utc_offset_min) {
     cur_jdn_ = ymd_to_jdn(cur_y, cur_m, cur_d);
   }
 
@@ -296,6 +405,25 @@ class IcsStreamParser {
       has_pending_ = false;
     }
     if (saw_vcalendar_) summary_.valid = true;
+
+    // Derive continuous school-holiday status & merged Back-to-School countdown from 64-day bitmask
+    // (accurately merges adjacent Mon-Fri Half Term + Monday INSET Day regardless of VEVENT order!)
+    if ((hol_mask_ & 1ULL) != 0) summary_.today_is_school_holiday = true;
+    if ((hol_mask_ & 2ULL) != 0) summary_.tomorrow_is_school_holiday = true;
+    if (summary_.today_is_school_holiday) {
+      for (int d = 1; d <= 62; d++) {
+        int64_t day_jdn = cur_jdn_ + d;
+        // JDN % 7: 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun
+        int jdow = (int)(((day_jdn % 7) + 7) % 7);
+        bool is_wknd = (jdow == 5 || jdow == 6);
+        bool is_hol_d = ((hol_mask_ & (1ULL << d)) != 0);
+        if (!is_wknd && !is_hol_d) {
+          summary_.back_to_school_days = d;
+          break;
+        }
+      }
+    }
+
     // Sync legacy convenience fields from rich arrays
     if (summary_.countdowns[0].valid) {
       summary_.next_days_away = summary_.countdowns[0].days_away;
@@ -318,15 +446,44 @@ class IcsStreamParser {
     return false;
   }
 
-  static bool is_holiday_keyword(const char *s) {
-    return icontains(s, "holiday") || icontains(s, "half term") || icontains(s, "half-term") ||
-           icontains(s, "inset") || icontains(s, "no school") || icontains(s, "school closed") ||
-           icontains(s, "training day") || icontains(s, "teacher day") || icontains(s, "bank hol") ||
-           icontains(s, "easter break") || icontains(s, "summer break") || icontains(s, "christmas break") ||
-           icontains(s, "winter break") || icontains(s, "spring break") || icontains(s, "closed");
+  // Quote-aware RFC 5545 content-line splitter: skips ':' inside double-quoted parameters
+  // (e.g., SUMMARY;ALTREP="https://school.org/info":Swimming Lesson).
+  static const char *find_ics_value_colon(const char *line) {
+    if (line == nullptr) return nullptr;
+    bool in_quote = false;
+    for (const char *p = line; *p != '\0'; p++) {
+      if (*p == '"') {
+        in_quote = !in_quote;
+      } else if (*p == ':' && !in_quote) {
+        return p;
+      }
+    }
+    return nullptr;
   }
 
-  static bool parse_ics_date(const char *val, int &y, int &m, int &d, bool &has_time, int &hr, int &mn) {
+  // Phrase-aware school-holiday classifier (prevents false positives like "After-School Club Booking Closed").
+  static bool is_holiday_keyword(const char *s) {
+    if (s == nullptr || s[0] == '\0') return false;
+    // Explicit high-confidence school-closed phrases always match
+    if (icontains(s, "school closed") || icontains(s, "academy closed") || icontains(s, "nursery closed") ||
+        icontains(s, "college closed") || icontains(s, "half term") || icontains(s, "half-term") ||
+        icontains(s, "inset") || icontains(s, "no school") || icontains(s, "training day") ||
+        icontains(s, "teacher day") || icontains(s, "staff day") || icontains(s, "bank hol") ||
+        icontains(s, "easter break") || icontains(s, "summer break") || icontains(s, "christmas break") ||
+        icontains(s, "winter break") || icontains(s, "spring break") || icontains(s, "term break") ||
+        icontains(s, "school holiday")) {
+      return true;
+    }
+    // Reject admin/booking/club notices containing "holiday" or "closed"
+    if (icontains(s, "club") || icontains(s, "camp") || icontains(s, "booking") || icontains(s, "deposit") ||
+        icontains(s, "photo") || icontains(s, "homework") || icontains(s, "deadline") || icontains(s, "forms") ||
+        icontains(s, "sale") || icontains(s, "application")) {
+      return false;
+    }
+    return icontains(s, "holiday");
+  }
+
+  static bool parse_ics_date(const char *val, int &y, int &m, int &d, bool &has_time, int &hr, int &mn, bool &is_utc) {
     if (val == nullptr || strlen(val) < 8) return false;
     for (int i = 0; i < 8; i++) {
       if (!isdigit((unsigned char)val[i])) return false;
@@ -336,15 +493,41 @@ class IcsStreamParser {
     d = (val[6] - '0') * 10 + (val[7] - '0');
     if (y < 1970 || y > 2150 || m < 1 || m > 12 || d < 1 || d > 31) return false;
     has_time = false;
+    is_utc = false;
     hr = 0;
     mn = 0;
-    if (val[8] == 'T' && strlen(val) >= 13 && isdigit((unsigned char)val[9]) && isdigit((unsigned char)val[10]) &&
+    size_t vlen = strlen(val);
+    if (val[8] == 'T' && vlen >= 13 && isdigit((unsigned char)val[9]) && isdigit((unsigned char)val[10]) &&
         isdigit((unsigned char)val[11]) && isdigit((unsigned char)val[12])) {
       hr = (val[9] - '0') * 10 + (val[10] - '0');
       mn = (val[11] - '0') * 10 + (val[12] - '0');
-      if (hr >= 0 && hr <= 23 && mn >= 0 && mn <= 59) has_time = true;
+      if (hr >= 0 && hr <= 23 && mn >= 0 && mn <= 59) {
+        has_time = true;
+        // Check for trailing 'Z' (either YYYYMMDDTHHMMZ or YYYYMMDDTHHMMSSZ)
+        for (size_t k = 13; k < vlen && k <= 16; k++) {
+          if (val[k] == 'Z' || val[k] == 'z') {
+            is_utc = true;
+            break;
+          }
+        }
+      }
     }
     return true;
+  }
+
+  // Applies local_utc_offset_min_ to a UTC DATE-TIME, rolling JDN across midnight when needed.
+  void apply_utc_offset_(int64_t &jdn, int &hr, int &mn) const {
+    int total_m = hr * 60 + mn + local_utc_offset_min_;
+    while (total_m < 0) {
+      total_m += 1440;
+      jdn -= 1;
+    }
+    while (total_m >= 1440) {
+      total_m -= 1440;
+      jdn += 1;
+    }
+    hr = total_m / 60;
+    mn = total_m % 60;
   }
 
   static void clean_summary(const char *src, char *dst, size_t cap) {
@@ -367,6 +550,21 @@ class IcsStreamParser {
           dst[w++] = src[i++];
           dst[w++] = src[i];
         }
+      } else if (uc == 0xE2 && (unsigned char)src[i + 1] == 0x80 && src[i + 2] != '\0') {
+        // Transliterate UTF-8 smart quotes & en/em dashes so Fira Code renders them cleanly!
+        unsigned char b2 = (unsigned char)src[i + 2];
+        if (b2 == 0x98 || b2 == 0x99) {
+          dst[w++] = '\'';
+        } else if (b2 == 0x9C || b2 == 0x9D) {
+          dst[w++] = '"';
+        } else if (b2 == 0x93 || b2 == 0x94) {
+          dst[w++] = '-';
+        } else if (b2 == 0xA6 && w + 3 < cap) {
+          dst[w++] = '.';
+          dst[w++] = '.';
+          dst[w++] = '.';
+        }
+        i += 2;
       }
     }
     while (w > 0 && dst[w - 1] == ' ') w--;
@@ -445,38 +643,67 @@ class IcsStreamParser {
     ev_has_start_ = false;
     ev_has_end_ = false;
     ev_has_time_ = false;
+    ev_is_utc_ = false;
+    ev_end_has_time_ = false;
+    ev_end_is_utc_ = false;
     ev_yearly_ = false;
+    ev_weekly_ = false;
+    ev_has_until_ = false;
+    ev_cancelled_ = false;
     ev_sy_ = ev_sm_ = ev_sd_ = 0;
     ev_ey_ = ev_em_ = ev_ed_ = 0;
     ev_hr_ = ev_mn_ = 0;
+    ev_ehr_ = ev_emn_ = 0;
+    ev_until_jdn_ = 0;
     ev_summary_[0] = '\0';
   }
 
   void commit_event_() {
-    if (!ev_has_start_ || ev_summary_[0] == '\0') return;
+    if (!ev_has_start_ || ev_summary_[0] == '\0' || ev_cancelled_) return;
     summary_.events_seen++;
 
-    int sy = ev_sy_, sm = ev_sm_, sd = ev_sd_;
-    int64_t start_jdn = ymd_to_jdn(sy, sm, sd);
-    int64_t end_jdn_incl = start_jdn;
+    int64_t orig_start_jdn = ymd_to_jdn(ev_sy_, ev_sm_, ev_sd_);
+    int64_t start_jdn = orig_start_jdn;
+    int hr = ev_hr_;
+    int mn = ev_mn_;
+    if (ev_has_time_ && ev_is_utc_) {
+      apply_utc_offset_(start_jdn, hr, mn);
+    }
 
+    int64_t end_jdn_incl = start_jdn;
     if (ev_has_end_) {
       int64_t ej = ymd_to_jdn(ev_ey_, ev_em_, ev_ed_);
+      int ehr = ev_ehr_, emn = ev_emn_;
+      if (ev_end_has_time_ && ev_end_is_utc_) {
+        apply_utc_offset_(ej, ehr, emn);
+      }
       if (!ev_has_time_ && ej > start_jdn) {
+        end_jdn_incl = ej - 1;
+      } else if (ev_has_time_ && ej > start_jdn && ehr == 0 && emn == 0) {
+        // Timed event ending cleanly at 00:00 of next day does not spill into next day
         end_jdn_incl = ej - 1;
       } else if (ej >= start_jdn) {
         end_jdn_incl = ej;
       }
     }
 
+    int64_t span = end_jdn_incl - start_jdn;
     if (ev_yearly_) {
-      int64_t span = end_jdn_incl - start_jdn;
-      int64_t this_yr = ymd_to_jdn(cur_y_, sm, sd);
-      if (this_yr + span < cur_jdn_) {
-        this_yr = ymd_to_jdn(cur_y_ + 1, sm, sd);
+      int ly = ev_sy_, lm = ev_sm_, ld = ev_sd_;
+      jdn_to_ymd(start_jdn, ly, lm, ld);
+      int64_t cand = ymd_to_jdn(cur_y_, lm, ld);
+      if (cand + span < cur_jdn_) cand = ymd_to_jdn(cur_y_ + 1, lm, ld);
+      if (cand < start_jdn) cand = start_jdn;
+      if (ev_has_until_ && cand > ev_until_jdn_) return;
+      start_jdn = cand;
+      end_jdn_incl = cand + span;
+    } else if (ev_weekly_) {
+      if (cur_jdn_ > start_jdn + span) {
+        int64_t weeks = (cur_jdn_ - (start_jdn + span) + 6) / 7;
+        start_jdn += weeks * 7;
+        end_jdn_incl = start_jdn + span;
       }
-      start_jdn = this_yr;
-      end_jdn_incl = this_yr + span;
+      if (ev_has_until_ && start_jdn > ev_until_jdn_) return;
     }
 
     bool hits_today = (cur_jdn_ >= start_jdn && cur_jdn_ <= end_jdn_incl);
@@ -498,9 +725,13 @@ class IcsStreamParser {
     }
     if (display_sum[0] == '\0') snprintf(display_sum, sizeof(display_sum), "%s", ev_summary_);
 
+    // Only treat an event as timed today on its actual start day (prevents multi-day timed events
+    // from repeating Day 1's start hour on Day 2/3, while properly preserving 00:00 midnight timed events!)
+    bool is_timed_today = hits_today && ev_has_time_ && (cur_jdn_ == start_jdn);
+
     char formatted[48];
-    if (hits_today && ev_has_time_ && (ev_hr_ != 0 || ev_mn_ != 0)) {
-      std::string ts = format_short_time(ev_hr_, ev_mn_, false);
+    if (is_timed_today) {
+      std::string ts = format_short_time(hr, mn, false);
       snprintf(formatted, sizeof(formatted), "%.34s (%.8s)", display_sum, ts.c_str());
     } else {
       snprintf(formatted, sizeof(formatted), "%.47s", display_sum);
@@ -508,49 +739,46 @@ class IcsStreamParser {
 
     if (is_school_ || is_tagged_noschool) {
       bool is_hol = is_tagged_noschool || is_holiday_keyword(ev_summary_);
-      if (hits_today) {
-        if (is_hol) {
-          summary_.today_is_school_holiday = true;
-          // Auto Back-to-School countdown: days from today until first weekday after end_jdn_incl
-          int64_t next_day = end_jdn_incl + 1;
-          // JDN % 7: 0=Mon, 1=Tue, ..., 4=Fri, 5=Sat, 6=Sun -> skip Sat(5) & Sun(6)!
-          while ((next_day % 7) == 5 || (next_day % 7) == 6) next_day++;
-          int bts = (int)(next_day - cur_jdn_);
-          if (bts > 0 && (summary_.back_to_school_days < 0 || bts > summary_.back_to_school_days)) {
-            summary_.back_to_school_days = bts;
+      if (is_hol) {
+        // Stamp every overlapping day [0..62] into the 64-day holiday bitmask!
+        int64_t lo = std::max(cur_jdn_, start_jdn);
+        int64_t hi = std::min(cur_jdn_ + 62, end_jdn_incl);
+        for (int64_t j = lo; j <= hi; j++) {
+          hol_mask_ |= (1ULL << (j - cur_jdn_));
+        }
+        if (days_away >= 1 && days_away <= 60) {
+          if (summary_.next_school_holiday_days < 0 || days_away < summary_.next_school_holiday_days) {
+            summary_.next_school_holiday_days = days_away;
+            snprintf(summary_.next_school_holiday_name, sizeof(summary_.next_school_holiday_name), "%.35s",
+                     display_sum);
           }
         }
-        if (summary_.school_note[0] == '\0' || is_hol) {
-          snprintf(summary_.school_note, sizeof(summary_.school_note), "%s", formatted);
-        }
       }
-      if (hits_tomorrow && is_hol) {
-        summary_.tomorrow_is_school_holiday = true;
-      }
-      // Auto upcoming school holiday countdown (within 60 days)
-      if (is_hol && days_away >= 1 && days_away <= 60) {
-        if (summary_.next_school_holiday_days < 0 || days_away < summary_.next_school_holiday_days) {
-          summary_.next_school_holiday_days = days_away;
-          snprintf(summary_.next_school_holiday_name, sizeof(summary_.next_school_holiday_name), "%.35s", display_sum);
-        }
+      if (hits_today && (summary_.school_note[0] == '\0' || is_hol)) {
+        snprintf(summary_.school_note, sizeof(summary_.school_note), "%s", formatted);
       }
     }
 
     if (hits_today) {
-      if (ev_has_time_ && (ev_hr_ != 0 || ev_mn_ != 0)) {
-        insert_timed_today_(ev_hr_ * 60 + ev_mn_, display_sum);
+      if (is_timed_today) {
+        insert_timed_today_(hr * 60 + mn, display_sum);
       } else if (summary_.today_allday[0] == '\0') {
         snprintf(summary_.today_allday, sizeof(summary_.today_allday), "%.43s", display_sum);
       }
-      if (summary_.today_title[0] == '\0' || (ev_has_time_ && summary_.today_title[0] != '\0')) {
+      if (summary_.today_title[0] == '\0' || is_timed_today) {
         snprintf(summary_.today_title, sizeof(summary_.today_title), "%s", formatted);
       }
     }
-    if (hits_tomorrow && summary_.tomorrow_title[0] == '\0') {
-      snprintf(summary_.tomorrow_title, sizeof(summary_.tomorrow_title), "%s", display_sum);
+    if (hits_tomorrow) {
+      int prio = is_tagged_countdown ? 3 : (is_tagged_noschool ? 2 : (ev_has_time_ ? 1 : 0));
+      if (summary_.tomorrow_title[0] == '\0' || prio > tomorrow_prio_) {
+        tomorrow_prio_ = prio;
+        snprintf(summary_.tomorrow_title, sizeof(summary_.tomorrow_title), "%s", display_sum);
+      }
     }
+    int min_cd = is_tagged_countdown ? 1 : 2;
     int max_horizon = is_tagged_countdown ? 90 : 14;
-    if (days_away >= 2 && days_away <= max_horizon) {
+    if (days_away >= min_cd && days_away <= max_horizon) {
       insert_countdown_(days_away, is_tagged_countdown, display_sum);
     }
   }
@@ -572,26 +800,43 @@ class IcsStreamParser {
     }
     if (!in_vevent_) return;
 
-    const char *colon = strchr(line, ':');
+    const char *colon = find_ics_value_colon(line);
     if (colon == nullptr) return;
     const char *val = colon + 1;
 
     if (strncmp(line, "DTSTART", 7) == 0 && (line[7] == ':' || line[7] == ';')) {
-      ev_has_start_ = parse_ics_date(val, ev_sy_, ev_sm_, ev_sd_, ev_has_time_, ev_hr_, ev_mn_);
+      ev_has_start_ = parse_ics_date(val, ev_sy_, ev_sm_, ev_sd_, ev_has_time_, ev_hr_, ev_mn_, ev_is_utc_);
     } else if (strncmp(line, "DTEND", 5) == 0 && (line[5] == ':' || line[5] == ';')) {
-      bool dummy_t = false;
-      int dh = 0, dm = 0;
-      ev_has_end_ = parse_ics_date(val, ev_ey_, ev_em_, ev_ed_, dummy_t, dh, dm);
+      ev_has_end_ = parse_ics_date(val, ev_ey_, ev_em_, ev_ed_, ev_end_has_time_, ev_ehr_, ev_emn_, ev_end_is_utc_);
     } else if (strncmp(line, "SUMMARY", 7) == 0 && (line[7] == ':' || line[7] == ';')) {
       clean_summary(val, ev_summary_, sizeof(ev_summary_));
+    } else if (strncmp(line, "STATUS", 6) == 0 && (line[6] == ':' || line[6] == ';')) {
+      if (icontains(val, "CANCELLED")) ev_cancelled_ = true;
     } else if (strncmp(line, "RRULE", 5) == 0 && (line[5] == ':' || line[5] == ';')) {
       if (icontains(val, "FREQ=YEARLY")) ev_yearly_ = true;
+      else if (icontains(val, "FREQ=WEEKLY")) ev_weekly_ = true;
+      const char *up = nullptr;
+      for (const char *p = val; *p; p++) {
+        if (strncasecmp(p, "UNTIL=", 6) == 0) {
+          up = p + 6;
+          break;
+        }
+      }
+      if (up != nullptr) {
+        int uy = 0, um = 0, ud = 0, uh = 0, umn = 0;
+        bool uht = false, uutc = false;
+        if (parse_ics_date(up, uy, um, ud, uht, uh, umn, uutc)) {
+          ev_has_until_ = true;
+          ev_until_jdn_ = ymd_to_jdn(uy, um, ud);
+        }
+      }
     }
   }
 
   int cur_y_{2026}, cur_m_{1}, cur_d_{1};
   int64_t cur_jdn_{0};
   bool is_school_{false};
+  int local_utc_offset_min_{0};
   bool saw_vcalendar_{false};
   bool in_vevent_{false};
   bool has_pending_{false};
@@ -599,13 +844,24 @@ class IcsStreamParser {
   size_t raw_len_{0};
   char pending_line_[256]{};
 
+  uint64_t hol_mask_{0};
+  int tomorrow_prio_{-1};
+
   bool ev_has_start_{false};
   bool ev_has_end_{false};
   bool ev_has_time_{false};
+  bool ev_is_utc_{false};
+  bool ev_end_has_time_{false};
+  bool ev_end_is_utc_{false};
   bool ev_yearly_{false};
+  bool ev_weekly_{false};
+  bool ev_has_until_{false};
+  bool ev_cancelled_{false};
   int ev_sy_{0}, ev_sm_{0}, ev_sd_{0};
   int ev_ey_{0}, ev_em_{0}, ev_ed_{0};
   int ev_hr_{0}, ev_mn_{0};
+  int ev_ehr_{0}, ev_emn_{0};
+  int64_t ev_until_jdn_{0};
   char ev_summary_[48]{};
 
   IcsFeedSummary summary_;

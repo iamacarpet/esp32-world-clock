@@ -25,7 +25,7 @@ Connect the supplied **USB-C power cable** into any standard 5V USB power adapte
 Once connected, the clock displays a **second QR Code**, its personal web address, and its unique login right on the screen:
 - **Address**: `http://world-clock-XXXXXX.local/` *(unique to your clock!)*
 - **Username**: `parent`
-- **Password**: `clock-XXXXXX` *(matches the 6 characters on your screen)*
+- **Password**: the **unique 8-character random code** shown on your clock's boot screen *(saved automatically across restarts & updates!)*
 
 Scan the QR code (or type the address into Safari/Chrome) to customize:
 - **Child's Name, Birth Date & Home Town** (plus Timezone, `°C / °F`, and **Age Profile: Little Explorer / Junior Space Kid / Teen Study Desk**)

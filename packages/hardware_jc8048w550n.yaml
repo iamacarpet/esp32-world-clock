@@ -35,31 +35,9 @@ logger:
 
 safe_mode:
 
-ota:
-  - platform: esphome
-    id: ota_esphome
-    on_begin:
-      then:
-        - component.update: device_prefs
-        - script.execute: ota_splash_begin
-    on_progress:
-      then:
-        - lambda: |-
-            int pct = (int)x;
-            if (pct >= id(last_ota_pct) + 5 || pct >= 99) {
-              id(last_ota_pct) = pct;
-              char obuf[48];
-              snprintf(obuf, sizeof(obuf), "UPDATING CLOCK... %d%%", pct);
-              lv_label_set_text(id(splash_title), obuf);
-              lv_bar_set_value(id(splash_bar), pct, LV_ANIM_OFF);
-              lv_timer_handler();
-            }
-    on_end:
-      then:
-        - script.execute: ota_splash_end
-    on_error:
-      then:
-        - script.execute: ota_splash_error
+# Note: OTA platforms are intentionally configured per-backend (authenticated web_server OTA for
+# standalone release builds; password-protected esphome OTA for Home Assistant / dev builds) so
+# port 3232 is NEVER exposed without authentication.
 
 # Tuned 19.5kHz Flicker-Free PWM Backlight (GPIO2)
 output:

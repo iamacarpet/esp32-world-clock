@@ -11,9 +11,9 @@ Every clock has its own unique address and password printed right on its boot sc
 2. On first setup, scan the **Wi-Fi QR Code** on the screen with your phone camera (or join hotspot `world-clock-XXXXXX`, password `ClockSetup123`) to connect the clock to your home Wi-Fi.
 3. Once connected, scan the **Settings QR Code** (or type `http://world-clock-XXXXXX.local/` into Safari/Chrome) and log in with:
    - **Username**: `parent`
-   - **Password**: `clock-XXXXXX` *(matches the 6 characters on your screen)*
+   - **Password**: the **unique 8-character random password** displayed right on your clock's boot screen *(generated securely on first boot and saved automatically across updates!)*
 
-> **Running multiple clocks in one home?** Each clock automatically gets its own unique `world-clock-XXXXXX.local` address and `clock-XXXXXX` password from its hardware ID, so sibling clocks never clash!
+> **Running multiple clocks in one home?** Each clock automatically gets its own unique `world-clock-XXXXXX.local` address and its own cryptographically random 8-character Web UI password, so sibling clocks never clash!
 >
 > **Sleep-Safe Red QR Code:** Even if the power briefly blinks at 2 AM, the boot screen uses dim **night-vision red-on-black** (zero blue/white light!) and automatically skips the 4-second info splash between 10 PM and 6 AM so it drops straight back into dim Red Sleep Mode.
 
@@ -140,10 +140,12 @@ Personalize any ticker or card message! Use these dynamic placeholders so changi
 ## 5. Home Assistant Calendar Setup (For HA Users)
 
 ### Option A (Recommended — Zero Home Assistant Calendar Setup!)
-Home Assistant clocks (`packages/backend_homeassistant.yaml`) include the **exact same built-in Core 0 `.ics` / `webcal://` calendar engine**! You do **not** need to set up any Home Assistant Calendar integration or template sensors:
+Kids/Teen Home Assistant clocks (`packages/backend_homeassistant.yaml` + `packages/ha_kids_calendar.yaml`) include the **exact same built-in Core 0 HTTPS `.ics` / `webcal://` calendar engine** (and calendar URL fields are password-masked so secret links stay private!):
 1. Open your clock's device page in Home Assistant (**Settings → Devices & Services → ESPHome → your clock**).
-2. Paste your Apple iCloud (`webcal://...`) or Google `.ics` link directly into **Family Calendar URL** and/or **School Term & Holiday Calendar URL**.
+2. Paste your Apple iCloud (`webcal://...`) or Google `.ics` link (`https://...`) directly into **Family Calendar URL** and/or **School Term & Holiday Calendar URL**.
 3. Pick your **Calendar Display Style** (`Subtle Ticker Only`, `Prominent Dock Card`, or `Morning Launchpad Takeover`), **Calendar Priority Mode**, and **Leave for School Time** — and press **Sync Calendars Now**!
+
+*(Adult/Office Energy clocks omit `packages/ha_kids_calendar.yaml`, keeping Home Assistant free of kids/school entities and saving RAM/CPU.)*
 
 ### Option B (Optional — Home Assistant Template Sensors)
 If you prefer feeding events from local Home Assistant `calendar.*` entities instead of `.ics` URLs, include `packages/ha_calendar_sensors.yaml` and add this snippet to Home Assistant's `configuration.yaml`:

@@ -1,6 +1,8 @@
 # Optional Home Assistant Calendar & School Routine Bindings
 # Add this package to any HA clock config alongside packages/backend_homeassistant.yaml
-# and set the 4 calendar_* substitutions to your Home Assistant template sensors (see README.md).
+# and set the 4 calendar_* substitutions to your Home Assistant template sensors (see docs/PARENT_GUIDE.md).
+# Populates both v1.1/v1.2 IcsFeedSummary structs (for Priority Engine, Prominent Dock & Morning Launchpad)
+# and legacy summary globals.
 
 text_sensor:
   - platform: homeassistant
@@ -9,7 +11,13 @@ text_sensor:
     internal: true
     on_value:
       then:
-        - lambda: 'id(cal_today_event) = (x == "unknown" || x == "unavailable" || x == "none") ? "" : x;'
+        - lambda: |-
+            std::string val = (x == "unknown" || x == "unavailable" || x == "none") ? "" : x;
+            id(cal_today_event) = val;
+            id(fam_cal_summary).valid = true;
+            snprintf(id(fam_cal_summary).today_allday, sizeof(id(fam_cal_summary).today_allday), "%.43s", val.c_str());
+            snprintf(id(fam_cal_summary).today_title, sizeof(id(fam_cal_summary).today_title), "%.47s", val.c_str());
+            id(force_redraw) = true;
 
   - platform: homeassistant
     id: ha_cal_tomorrow
@@ -17,7 +25,11 @@ text_sensor:
     internal: true
     on_value:
       then:
-        - lambda: 'id(cal_tomorrow_event) = (x == "unknown" || x == "unavailable" || x == "none") ? "" : x;'
+        - lambda: |-
+            std::string val = (x == "unknown" || x == "unavailable" || x == "none") ? "" : x;
+            id(cal_tomorrow_event) = val;
+            id(fam_cal_summary).valid = true;
+            snprintf(id(fam_cal_summary).tomorrow_title, sizeof(id(fam_cal_summary).tomorrow_title), "%.47s", val.c_str());
 
   - platform: homeassistant
     id: ha_cal_school_note
@@ -26,8 +38,12 @@ text_sensor:
     on_value:
       then:
         - lambda: |-
+            std::string val = (x == "unknown" || x == "unavailable" || x == "none") ? "" : x;
             id(cal_school_configured) = true;
-            id(cal_school_note) = (x == "unknown" || x == "unavailable" || x == "none") ? "" : x;
+            id(cal_school_note) = val;
+            id(sch_cal_summary).valid = true;
+            snprintf(id(sch_cal_summary).school_note, sizeof(id(sch_cal_summary).school_note), "%.47s", val.c_str());
+            id(force_redraw) = true;
 
 binary_sensor:
   - platform: homeassistant
@@ -39,4 +55,6 @@ binary_sensor:
         - lambda: |-
             id(cal_school_configured) = true;
             id(cal_school_holiday) = x;
+            id(sch_cal_summary).valid = true;
+            id(sch_cal_summary).today_is_school_holiday = x;
             id(force_redraw) = true;

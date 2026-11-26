@@ -1,49 +1,61 @@
-# Standalone Backend: Core 0 Open-Meteo + ISS NetWorker, Google NTP, Captive Portal & Full iPhone Web UI v3
+# Standalone Backend: Core 0 Open-Meteo + ISS + .ics NetWorker, Google NTP, Captive Portal & Full iPhone Web UI v3
 world_clock:
   standalone: true
+
+globals:
+  # Persisted 64-bit random token for per-device Web UI password (generated via esp_random() on first boot; never exposed in sensors!)
+  - { id: web_pass_token, type: uint64_t, restore_value: yes, initial_value: '0' }
+  - { id: active_web_pass, type: std::string, restore_value: no, initial_value: '""' }
 
 esphome:
   includes:
     - <esp_crt_bundle.h>
+    - <esp_random.h>
   on_boot:
     - priority: -100
       then:
         - lambda: |-
-            // Universal multi-device release mode: derive a unique per-board Web UI password
-            // ("clock-<last6mac>") when name_add_mac_suffix is enabled, and publish diagnostics.
+            // Universal multi-device release mode: generate & persist a cryptographically random 8-char
+            // setup password in NVS (never derived from broadcast MAC/mDNS!) and display ONLY on physical splash.
             std::string mac_full = esphome::get_mac_address();
             std::string mac6 = (mac_full.size() >= 6) ? mac_full.substr(mac_full.size() - 6) : mac_full;
-            if (esphome::App.is_name_add_mac_suffix_enabled() && !mac6.empty()) {
-              static char s_hw_pass[24];
-              snprintf(s_hw_pass, sizeof(s_hw_pass), "clock-%s", mac6.c_str());
+            if (esphome::App.is_name_add_mac_suffix_enabled()) {
+              if (id(web_pass_token) == 0ULL) {
+                uint64_t tok = 0ULL;
+                while (tok == 0ULL) {
+                  tok = ((uint64_t)esp_random() << 32) | (uint64_t)esp_random();
+                }
+                id(web_pass_token) = tok;
+              }
+              id(active_web_pass) = world_clock::format_random_setup_password(id(web_pass_token));
               #if defined(USE_WEBSERVER_AUTH)
                 if (esphome::web_server_base::global_web_server_base != nullptr) {
-                  esphome::web_server_base::global_web_server_base->set_auth_password(s_hw_pass);
+                  esphome::web_server_base::global_web_server_base->set_auth_password(id(active_web_pass).c_str());
                 }
               #endif
             }
             std::string url_s = "http://" + esphome::App.get_name() + ".local/";
             id(diag_web_url).publish_state(url_s);
-            id(diag_hw_id).publish_state(world_clock::to_upper_ascii(mac6));
+            id(diag_hw_id).publish_state(mac6);
 
             // Apply restored runtime timezone & calendar URLs before Core 0 starts polling
             #ifdef USE_TIME_TIMEZONE
               world_clock::apply_named_timezone(id(cfg_timezone).current_option());
             #endif
             auto &t = world_clock::standalone_telemetry();
-            while (__atomic_test_and_set(&t.lock, __ATOMIC_ACQUIRE)) vTaskDelay(1);
-            snprintf(t.family_cal_url, sizeof(t.family_cal_url), "%s", id(cfg_family_cal_url).state.c_str());
-            snprintf(t.school_cal_url, sizeof(t.school_cal_url), "%s", id(cfg_school_cal_url).state.c_str());
-            __atomic_clear(&t.lock, __ATOMIC_RELEASE);
+            t.ensure_mutex();
+            if (t.lock(pdMS_TO_TICKS(50))) {
+              snprintf(t.family_cal_url, sizeof(t.family_cal_url), "%s", id(cfg_family_cal_url).state.c_str());
+              snprintf(t.school_cal_url, sizeof(t.school_cal_url), "%s", id(cfg_school_cal_url).state.c_str());
+              t.unlock();
+            }
 
             float init_lat = !std::isnan(id(cfg_lat).state) ? id(cfg_lat).state : (float)${default_lat};
             float init_lon = !std::isnan(id(cfg_lon).state) ? id(cfg_lon).state : (float)${default_lon};
             id(active_lat) = init_lat;
             id(active_lon) = init_lon;
-            world_clock::NetWorker::start(
-                init_lat, init_lon,
-                []() -> bool { return id(wifi_conn).is_connected(); },
-                []() -> bool { return id(clock_time).utcnow().is_valid(); });
+            world_clock::NetWorker::start(init_lat, init_lon);
+        - component.update: device_prefs
 
 esp32:
   framework:
@@ -92,20 +104,10 @@ ota:
   - platform: web_server
     on_begin:
       then:
-        - component.update: device_prefs
         - script.execute: ota_splash_begin
     on_progress:
       then:
-        - lambda: |-
-            int pct = (int)x;
-            if (pct >= id(last_ota_pct) + 5 || pct >= 99) {
-              id(last_ota_pct) = pct;
-              char obuf[48];
-              snprintf(obuf, sizeof(obuf), "UPDATING CLOCK... %d%%", pct);
-              lv_label_set_text(id(splash_title), obuf);
-              lv_bar_set_value(id(splash_bar), pct, LV_ANIM_OFF);
-              lv_timer_handler();
-            }
+        - lambda: 'world_clock::ota_ui_state().pct.store((int)x, std::memory_order_relaxed);'
     on_end:
       then:
         - script.execute: ota_splash_end
@@ -231,6 +233,7 @@ select:
             #ifdef USE_TIME_TIMEZONE
               world_clock::apply_named_timezone(x);
             #endif
+            world_clock::standalone_telemetry().cal_force_sync.store(true, std::memory_order_release);
             id(force_redraw) = true;
         - script.execute: save_prefs_debounced
 
@@ -241,7 +244,7 @@ button:
     web_server: { sorting_group_id: grp_controls, sorting_weight: 30 }
     on_press:
       then:
-        - lambda: '__atomic_store_n(&world_clock::standalone_telemetry().force_sync, true, __ATOMIC_RELEASE);'
+        - lambda: 'world_clock::standalone_telemetry().force_sync.store(true, std::memory_order_release);'
   - platform: template
     name: "Start Nap Mode Now"
     id: start_nap_btn
@@ -535,7 +538,7 @@ datetime:
     type: date
     optimistic: true
     restore_value: true
-    initial_value: "2026-08-01"
+    initial_value: "2027-08-01"
     web_server: { sorting_group_id: grp_calendar, sorting_weight: 40 }
     on_value: { then: [ script.execute: save_prefs_debounced ] }
 
@@ -597,11 +600,12 @@ number:
       then:
         - lambda: |-
             auto &t = world_clock::standalone_telemetry();
-            while (__atomic_test_and_set(&t.lock, __ATOMIC_ACQUIRE)) vTaskDelay(1);
-            t.work_lat = x;
-            __atomic_clear(&t.lock, __ATOMIC_RELEASE);
+            if (t.lock(pdMS_TO_TICKS(50))) {
+              t.work_lat = x;
+              t.unlock();
+            }
             id(active_lat) = x;
-            __atomic_store_n(&t.force_sync, true, __ATOMIC_RELEASE);
+            t.force_sync.store(true, std::memory_order_release);
             id(force_redraw) = true;
         - script.execute: save_prefs_debounced
 
@@ -621,11 +625,12 @@ number:
       then:
         - lambda: |-
             auto &t = world_clock::standalone_telemetry();
-            while (__atomic_test_and_set(&t.lock, __ATOMIC_ACQUIRE)) vTaskDelay(1);
-            t.work_lon = x;
-            __atomic_clear(&t.lock, __ATOMIC_RELEASE);
+            if (t.lock(pdMS_TO_TICKS(50))) {
+              t.work_lon = x;
+              t.unlock();
+            }
             id(active_lon) = x;
-            __atomic_store_n(&t.force_sync, true, __ATOMIC_RELEASE);
+            t.force_sync.store(true, std::memory_order_release);
             id(force_redraw) = true;
         - script.execute: save_prefs_debounced
 
@@ -731,7 +736,7 @@ text:
   - platform: template
     id: cfg_family_cal_url
     name: "Family Calendar URL (iCloud or Google .ics)"
-    mode: text
+    mode: password
     max_length: 250
     optimistic: true
     restore_value: true
@@ -741,16 +746,17 @@ text:
       then:
         - lambda: |-
             auto &t = world_clock::standalone_telemetry();
-            while (__atomic_test_and_set(&t.lock, __ATOMIC_ACQUIRE)) vTaskDelay(1);
-            snprintf(t.family_cal_url, sizeof(t.family_cal_url), "%s", x.c_str());
-            __atomic_clear(&t.lock, __ATOMIC_RELEASE);
-            __atomic_store_n(&t.cal_force_sync, true, __ATOMIC_RELEASE);
+            if (t.lock(pdMS_TO_TICKS(50))) {
+              snprintf(t.family_cal_url, sizeof(t.family_cal_url), "%s", x.c_str());
+              t.unlock();
+            }
+            t.cal_force_sync.store(true, std::memory_order_release);
         - script.execute: save_prefs_debounced
 
   - platform: template
     id: cfg_school_cal_url
     name: "School Term & Holiday Calendar URL (.ics)"
-    mode: text
+    mode: password
     max_length: 250
     optimistic: true
     restore_value: true
@@ -760,10 +766,11 @@ text:
       then:
         - lambda: |-
             auto &t = world_clock::standalone_telemetry();
-            while (__atomic_test_and_set(&t.lock, __ATOMIC_ACQUIRE)) vTaskDelay(1);
-            snprintf(t.school_cal_url, sizeof(t.school_cal_url), "%s", x.c_str());
-            __atomic_clear(&t.lock, __ATOMIC_RELEASE);
-            __atomic_store_n(&t.cal_force_sync, true, __ATOMIC_RELEASE);
+            if (t.lock(pdMS_TO_TICKS(50))) {
+              snprintf(t.school_cal_url, sizeof(t.school_cal_url), "%s", x.c_str());
+              t.unlock();
+            }
+            t.cal_force_sync.store(true, std::memory_order_release);
         - script.execute: save_prefs_debounced
 
   - platform: template
@@ -980,8 +987,16 @@ interval:
           uint32_t now_ms = millis();
           if (!id(boot_grace_done) && now_ms >= 45000UL) id(boot_grace_done) = true;
 
-          // 1. Contention-Safe Non-Blocking Core 0 Weather & ISS Handoff
+          // 1. Contention-Safe Non-Blocking Core 0 Weather, ISS & Calendar Handoff (FreeRTOS mutex + std::atomic)
           auto &t = world_clock::standalone_telemetry();
+          t.wifi_connected.store(id(wifi_conn).is_connected(), std::memory_order_release);
+          t.time_valid.store(utc.is_valid(), std::memory_order_release);
+          if (now.is_valid() && utc.is_valid()) {
+            int64_t loc_min = world_clock::ymd_to_jdn(now.year, now.month, now.day_of_month) * 1440LL + now.hour * 60 + now.minute;
+            int64_t utc_min = world_clock::ymd_to_jdn(utc.year, utc.month, utc.day_of_month) * 1440LL + utc.hour * 60 + utc.minute;
+            t.local_utc_offset_min.store((int)(loc_min - utc_min), std::memory_order_relaxed);
+          }
+
           static bool s_wx_ever = false;
           static uint32_t s_wx_stamp = 0;
           static uint32_t s_seen_iss_ms = 0;
@@ -991,7 +1006,7 @@ interval:
           bool in_ecl = false;
           uint32_t iss_stamp = 0;
 
-          if (!__atomic_test_and_set(&t.lock, __ATOMIC_ACQUIRE)) {
+          if (t.try_lock()) {
             if (now.is_valid()) {
               t.loc_year = now.year;
               t.loc_month = now.month;
@@ -1009,7 +1024,7 @@ interval:
               t.wx_dirty = false;
               wx_changed = true;
             }
-            if (t.iss_valid && t.iss_ms != s_seen_iss_ms) {
+            if (t.iss_valid.load(std::memory_order_acquire) && t.iss_ms != s_seen_iss_ms) {
               in_lat = t.iss_lat;
               in_lon = t.iss_lon;
               in_ecl = t.iss_eclipsed;
@@ -1029,7 +1044,7 @@ interval:
               t.cal_dirty = false;
               wx_changed = true;
             }
-            __atomic_clear(&t.lock, __ATOMIC_RELEASE);
+            t.unlock();
           }
 
           id(cur_wx_age_ok) = s_wx_ever && ((uint32_t)(now_ms - s_wx_stamp) <= 7200000UL);
@@ -1162,8 +1177,8 @@ interval:
                 std::string sub_s = url_s;
                 if (!ip_s.empty()) sub_s += "  ·  " + ip_s;
                 lv_label_set_text(id(splash_sub), sub_s.c_str());
-                std::string hint_s = mac_mode
-                    ? ("Scan QR or visit URL · Login: parent / clock-" + mac6)
+                std::string hint_s = (mac_mode && !id(active_web_pass).empty())
+                    ? ("Scan QR or visit URL · Login: parent / " + id(active_web_pass))
                     : "Scan QR with phone camera to open Settings";
                 lv_label_set_text(id(splash_hint), hint_s.c_str());
                 lv_bar_set_value(id(splash_bar), time_ok ? 100 : 82, LV_ANIM_OFF);
@@ -1267,18 +1282,26 @@ interval:
             id(force_redraw) = true;
           }
 
+          int cur_min = now.is_valid() ? (now.hour * 60 + now.minute) : 720;
           int dow_now = now.is_valid() ? world_clock::ymd_dow_num(now.year, now.month, now.day_of_month) : 1;
           bool is_weekend = (dow_now == 0 || dow_now == 6);
           bool is_today_non_school = is_weekend || (id(cfg_holiday_liein_en).state && id(cal_school_holiday));
           bool is_tmrw_hol = id(sch_cal_summary).tomorrow_is_school_holiday || id(fam_cal_summary).tomorrow_is_school_holiday;
           bool is_tomorrow_non_school = (dow_now == 5 || dow_now == 6) || (id(cfg_holiday_liein_en).state && is_tmrw_hol);
-          bool is_special_night = now.is_valid() && (((now.month == 12 && (now.day_of_month == 24 || now.day_of_month == 31)) || (now.month == 11 && now.day_of_month == 5)));
+          bool is_special_today = now.is_valid() && world_clock::is_special_night_ymd(now.month, now.day_of_month);
+          bool is_special_yest = false;
+          if (now.is_valid()) {
+            int yy = 0, ym = 0, yd = 0;
+            world_clock::jdn_to_ymd(world_clock::ymd_to_jdn(now.year, now.month, now.day_of_month) - 1, yy, ym, yd);
+            is_special_yest = world_clock::is_special_night_ymd(ym, yd);
+          }
 
-          // Update dynamic token times with effective school-night / non-school-night / lie-in times
-          int eff_wd  = world_clock::effective_winddown_m(scfg, is_special_night, is_tomorrow_non_school);
-          int eff_bed = world_clock::effective_bedtime_m(scfg, is_special_night, is_tomorrow_non_school);
-          int eff_q   = world_clock::effective_quiet_m(scfg, is_today_non_school);
-          int eff_w   = world_clock::effective_wakeup_m(scfg, is_today_non_school);
+          // Update dynamic token times with active overnight cycle times (noon-split -> zero jump at midnight!)
+          int eff_wd  = world_clock::effective_cycle_winddown_m(cur_min, scfg, is_special_today, is_today_non_school, is_tomorrow_non_school, is_special_yest);
+          int eff_bed = world_clock::effective_cycle_bedtime_m(cur_min, scfg, is_special_today, is_today_non_school, is_tomorrow_non_school, is_special_yest);
+          int eff_q   = world_clock::effective_cycle_quiet_m(cur_min, scfg, is_today_non_school, is_tomorrow_non_school);
+          int eff_w   = world_clock::effective_cycle_wakeup_m(cur_min, scfg, is_today_non_school, is_tomorrow_non_school);
+          id(eff_wakeup_min_today) = world_clock::effective_wakeup_m(scfg, is_today_non_school);
           tctx.winddown = world_clock::format_short_time(eff_wd / 60, eff_wd % 60, use24);
           tctx.bedtime  = world_clock::format_short_time(eff_bed / 60, eff_bed % 60, use24);
           tctx.quiet    = world_clock::format_short_time(eff_q / 60, eff_q % 60, use24);
@@ -1317,8 +1340,7 @@ interval:
             else if (sel == "Star Wars Day") mode = 8;
           } else if (now.is_valid()) {
             int m = now.month, d = now.day_of_month, yr = now.year;
-            int cur_min = now.hour * 60 + now.minute;
-            slp = world_clock::evaluate_schedule(cur_min, scfg, is_special_night, is_today_non_school, is_tomorrow_non_school);
+            slp = world_clock::evaluate_schedule(cur_min, scfg, is_special_today, is_today_non_school, is_tomorrow_non_school, is_special_yest);
 
             if (id(nap_end_ms) != 0) {
               slp = 1;
@@ -1330,7 +1352,7 @@ interval:
                 else if (slp == 1) id(winddown_override_yday) = -1;
               }
               if (slp == 1 || slp == 3) {
-                rem_stars = world_clock::sleep_phase_remaining_01(cur_min, slp, scfg, is_special_night, is_today_non_school, is_tomorrow_non_school);
+                rem_stars = world_clock::sleep_phase_remaining_01(cur_min, slp, scfg, is_special_today, is_today_non_school, is_tomorrow_non_school, is_special_yest);
               }
             }
 
@@ -1346,6 +1368,16 @@ interval:
             else mode = id(cfg_iss_en).state ? 1 : 0;
           }
           id(sleep_remaining_01) = id(cfg_sleep_stars_en).state ? rem_stars : -1.0f;
+
+          // Sync custom UI countdown into shared globals so Morning Launchpad displays it too!
+          id(active_cd_name) = id(cfg_countdown_name).state;
+          if (now.is_valid() && !id(active_cd_name).empty() && id(cfg_countdown_date).year > 2020) {
+            id(active_cd_days) = world_clock::days_between_ymd(
+                now.year, now.month, now.day_of_month,
+                (int)id(cfg_countdown_date).year, (int)id(cfg_countdown_date).month, (int)id(cfg_countdown_date).day);
+          } else {
+            id(active_cd_days) = -1;
+          }
 
           // Focus Pomodoro state (live timer OR Focus Study Timer Preview)
           if (id(focus_end_ms) != 0) {
@@ -1368,11 +1400,13 @@ interval:
             if (id(focus_rem_01) >= 0.0f) { id(focus_rem_01) = -1.0f; s_last_focus_stars = -1; id(force_redraw) = true; }
           }
 
-          // Morning Launchpad Takeover activation (during morning window OR preview)
-          int now_m_lp = now.is_valid() ? (now.hour * 60 + now.minute) : -1;
+          // Morning Launchpad Takeover starts at effective wake-up time & skips quiet weekends with no scheduled event
+          bool has_today_ev = id(fam_cal_summary).today_timed[0].valid || (id(fam_cal_summary).today_allday[0] != '\0') || !id(parent_note_text).empty();
+          int lp_start_m = id(eff_wakeup_min_today);
           int lp_end_m = id(school_leave_min) + 5;
           bool auto_lp = (id(cal_display_style) == 2) && (slp == 0) && (mode <= 1 || mode == 3) &&
-                         now.is_valid() && (now_m_lp >= 405 && now_m_lp <= lp_end_m);
+                         now.is_valid() && (cur_min >= lp_start_m && cur_min <= lp_end_m) &&
+                         (!is_weekend || has_today_ev);
           bool want_lp = auto_lp || (sel == "Morning Launchpad Preview") || (sel == "No-School Holiday Preview");
           if (want_lp != id(launchpad_visible)) {
             id(launchpad_visible) = want_lp;
@@ -1389,8 +1423,8 @@ interval:
           id(sleep_phase) = slp;
           id(ui_palette) = pal;
           id(active_occasion) = mode;
-          __atomic_store_n(&t.sleep_phase, slp, __ATOMIC_RELEASE);
-          __atomic_store_n(&t.active_occasion, mode, __ATOMIC_RELEASE);
+          t.sleep_phase.store(slp, std::memory_order_release);
+          t.active_occasion.store(mode, std::memory_order_release);
           if (changed) {
             id(force_redraw) = false;
             id(applied_palette) = 255;
@@ -1460,7 +1494,7 @@ interval:
 
           // Cloud Sync icon
           bool iss_ok = (id(active_occasion) != 1 || id(sleep_phase) != 0 || id(iss_has_fix));
-          bool sync_busy = __atomic_load_n(&world_clock::standalone_telemetry().sync_busy, __ATOMIC_ACQUIRE);
+          bool sync_busy = world_clock::standalone_telemetry().sync_busy.load(std::memory_order_acquire);
           if (!w_ok || (id(boot_grace_done) && !id(cur_wx_age_ok))) {
             lv_label_set_text(id(sync_icon_label), "\U000F0164");
             lv_obj_set_style_text_color(id(sync_icon_label), lv_color_hex(0xE84A18), 0);
@@ -1532,15 +1566,22 @@ interval:
           scfg_t.special_delay_m = (int)roundf(std::isnan(id(cfg_special_delay).state) ? 0.0f : id(cfg_special_delay).state);
           scfg_t.weekend_offset_m = (int)roundf(std::isnan(id(cfg_weekend_offset).state) ? 0.0f : id(cfg_weekend_offset).state);
           scfg_t.non_school_bedtime_m = (int)roundf(std::isnan(id(cfg_late_bed_offset).state) ? 0.0f : id(cfg_late_bed_offset).state);
+          int now_m_cv = now.is_valid() ? (now.hour * 60 + now.minute) : 720;
           int dow_t = now.is_valid() ? world_clock::ymd_dow_num(now.year, now.month, now.day_of_month) : 1;
           bool is_wknd = (dow_t == 0 || dow_t == 6);
           bool is_today_ns_t = is_wknd || (id(cfg_holiday_liein_en).state && id(cal_school_holiday));
           bool is_tmrw_ns_t = (dow_t == 5 || dow_t == 6) || (id(cfg_holiday_liein_en).state && (id(sch_cal_summary).tomorrow_is_school_holiday || id(fam_cal_summary).tomorrow_is_school_holiday));
-          bool is_spec_t = now.is_valid() && (((now.month == 12 && (now.day_of_month == 24 || now.day_of_month == 31)) || (now.month == 11 && now.day_of_month == 5)));
-          int ew_t = world_clock::effective_winddown_m(scfg_t, is_spec_t, is_tmrw_ns_t);
-          int eb_t = world_clock::effective_bedtime_m(scfg_t, is_spec_t, is_tmrw_ns_t);
-          int eq_t = world_clock::effective_quiet_m(scfg_t, is_today_ns_t);
-          int eu_t = world_clock::effective_wakeup_m(scfg_t, is_today_ns_t);
+          bool is_spec_t = now.is_valid() && world_clock::is_special_night_ymd(now.month, now.day_of_month);
+          bool is_spec_y = false;
+          if (now.is_valid()) {
+            int yy = 0, ym = 0, yd = 0;
+            world_clock::jdn_to_ymd(world_clock::ymd_to_jdn(now.year, now.month, now.day_of_month) - 1, yy, ym, yd);
+            is_spec_y = world_clock::is_special_night_ymd(ym, yd);
+          }
+          int ew_t = world_clock::effective_cycle_winddown_m(now_m_cv, scfg_t, is_spec_t, is_today_ns_t, is_tmrw_ns_t, is_spec_y);
+          int eb_t = world_clock::effective_cycle_bedtime_m(now_m_cv, scfg_t, is_spec_t, is_today_ns_t, is_tmrw_ns_t, is_spec_y);
+          int eq_t = world_clock::effective_cycle_quiet_m(now_m_cv, scfg_t, is_today_ns_t, is_tmrw_ns_t);
+          int eu_t = world_clock::effective_cycle_wakeup_m(now_m_cv, scfg_t, is_today_ns_t, is_tmrw_ns_t);
           world_clock::TokenContext tctx{
               cname,
               world_clock::format_short_time(ew_t / 60, ew_t % 60, use24),
@@ -1556,24 +1597,16 @@ interval:
           uint8_t m = id(active_occasion);
           int b_mon = (id(cfg_birthdate).month >= 1) ? (int)id(cfg_birthdate).month : 1;
           int b_day = (id(cfg_birthdate).day >= 1)   ? (int)id(cfg_birthdate).day   : 1;
-          int wake_m = eu_t;
+          int wake_m = id(eff_wakeup_min_today);
           bool alt_slot = now.is_valid() && (((now.second / 12) % 2) == 0);
           std::string tick = "CLASSIC WORLD DAY/NIGHT MAP";
 
           // Build calm routine / calendar / countdown headline + Prominent Dock Card via multi-event priority engine
-          int now_m_cv = now.is_valid() ? (now.hour * 60 + now.minute) : 480;
-          int custom_cd_days = -1;
-          if (now.is_valid() && !id(cfg_countdown_name).state.empty() && id(cfg_countdown_date).year > 2020) {
-            custom_cd_days = world_clock::days_between_ymd(now.year, now.month, now.day_of_month,
-                                                           (int)id(cfg_countdown_date).year,
-                                                           (int)id(cfg_countdown_date).month,
-                                                           (int)id(cfg_countdown_date).day);
-          }
           auto cv = world_clock::build_calendar_view(
               id(fam_cal_summary), id(sch_cal_summary),
               id(cal_school_configured), is_wknd, now_m_cv,
               id(cal_priority_mode), (now.is_valid() ? now.second / 12 : 0),
-              use24, id(cfg_countdown_name).state, custom_cd_days);
+              use24, id(active_cd_name), id(active_cd_days));
 
           bool want_prom = (id(cal_display_style) == 1) && (slp == 0) && (id(focus_rem_01) < 0.0f) &&
                            (!cv.dock_title.empty() || !id(parent_note_text).empty());
@@ -1640,17 +1673,20 @@ interval:
               }
 
               int now_m = now.is_valid() ? (now.hour * 60 + now.minute) : -999;
+              int bday_sleeps = (!id(minimal_teen_mode) && now.is_valid())
+                                    ? world_clock::days_until_next_birthday(now.year, now.month, now.day_of_month, b_mon, b_day)
+                                    : -1;
               if (dist_iss < 900.0f) {
                 tick = std::string("ISS OVERHEAD NEAR ") + loc + "! WAVE AT ASTRONAUTS!";
               } else if (alt_slot && !routine_line.empty()) {
                 tick = routine_line;
               } else if (now.is_valid() && now_m >= wake_m && now_m < wake_m + 45) {
                 tick = resolve_msg(id(cfg_msg_wake_tick).state, "GOOD MORNING, {name}!") + " · ISS \u2192 " + reg;
-              } else if (now.is_valid() && now.month == b_mon && now.day_of_month < b_day) {
+              } else if (bday_sleeps >= 1 && bday_sleeps <= 14) {
                 char bbuf[64];
-                snprintf(bbuf, sizeof(bbuf), "%d SLEEPS TO BIRTHDAY! · ISS \u2192 %s", b_day - now.day_of_month, reg);
+                snprintf(bbuf, sizeof(bbuf), "%d %s TO BIRTHDAY! · ISS \u2192 %s", bday_sleeps, (bday_sleeps == 1) ? "SLEEP" : "SLEEPS", reg);
                 tick = bbuf;
-              } else if (id(cfg_holidays_en).state && now.is_valid() && now.month == 10 && now.day_of_month >= 25 && now.day_of_month < 31) {
+              } else if (id(cfg_holidays_en).state && !id(minimal_teen_mode) && now.is_valid() && now.month == 10 && now.day_of_month >= 25 && now.day_of_month < 31) {
                 char hbuf[64];
                 snprintf(hbuf, sizeof(hbuf), "%d DAYS TO HALLOWEEN! · ISS \u2192 %s", 31 - now.day_of_month, reg);
                 tick = hbuf;

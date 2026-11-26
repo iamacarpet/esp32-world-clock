@@ -247,7 +247,7 @@ script:
           lv_label_set_text(id(splash_kicker), "LEO'S WORLD & SPACE CLOCK");
           lv_label_set_text(id(splash_title), "CLOCK READY!");
           lv_label_set_text(id(splash_sub), "http://world-clock-a1b2c3.local/  ·  192.168.1.42");
-          lv_label_set_text(id(splash_hint), "Scan QR or visit URL · Login: parent / clock-a1b2c3");
+          lv_label_set_text(id(splash_hint), "Scan QR or visit URL · Login: parent / k7m3p9x2");
           lv_bar_set_value(id(splash_bar), 100, LV_ANIM_OFF);
           const char *qr_u = "http://world-clock-a1b2c3.local/";
           lv_qrcode_update(id(splash_qr), qr_u, strlen(qr_u));
