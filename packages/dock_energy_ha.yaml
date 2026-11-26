@@ -1,0 +1,197 @@
+# Pluggable Band 3 Dock (Adult / Office Example): 4-Tile Live Home Energy & Tariff Strip from Home Assistant
+# Swaps directly in place of packages/dock_weather.yaml — Band 1 (Header) & Band 2 (World Map) stay identical!
+
+sensor:
+  - platform: homeassistant
+    id: energy_pv1_w
+    entity_id: "${energy_pv1_entity}"
+    internal: true
+  - platform: homeassistant
+    id: energy_pv2_w
+    entity_id: "${energy_pv2_entity}"
+    internal: true
+  - platform: homeassistant
+    id: energy_pv_daily_kwh
+    entity_id: "${energy_pv_daily_entity}"
+    internal: true
+  - platform: homeassistant
+    id: energy_home_load_w
+    entity_id: "${energy_home_load_entity}"
+    internal: true
+  - platform: homeassistant
+    id: energy_batt_soc
+    entity_id: "${energy_batt_soc_entity}"
+    internal: true
+  - platform: homeassistant
+    id: energy_batt_power_w
+    entity_id: "${energy_batt_power_entity}"
+    internal: true
+  - platform: homeassistant
+    id: energy_grid_power_w
+    entity_id: "${energy_grid_power_entity}"
+    internal: true
+  - platform: homeassistant
+    id: energy_import_rate
+    entity_id: "${energy_import_rate_entity}"
+    internal: true
+  - platform: homeassistant
+    id: energy_export_rate
+    entity_id: "${energy_export_rate_entity}"
+    internal: true
+
+binary_sensor:
+  - platform: homeassistant
+    id: energy_off_peak
+    entity_id: "${energy_off_peak_entity}"
+    internal: true
+  - platform: homeassistant
+    id: energy_smart_dispatch
+    entity_id: "${energy_smart_dispatch_entity}"
+    internal: true
+
+lvgl:
+  pages:
+    - id: !extend main_page
+      widgets:
+        # Vertical Tile Dividers (4 equal 195px columns across 800px)
+        - obj: { id: ediv_1, x: 200, y: 410, width: 1, height: 58, bg_color: 0x24262D, bg_opa: COVER, border_width: 0 }
+        - obj: { id: ediv_2, x: 400, y: 410, width: 1, height: 58, bg_color: 0x24262D, bg_opa: COVER, border_width: 0 }
+        - obj: { id: ediv_3, x: 600, y: 410, width: 1, height: 58, bg_color: 0x24262D, bg_opa: COVER, border_width: 0 }
+
+        # === TILE 1: SOLAR PV (x = 12..192) ===
+        - label: { id: e_pv_icon, align: TOP_LEFT, x: 14, y: 412, text: "\U000F05A8", text_font: font_icon_sm, text_color: 0xF59E0B }
+        - label: { id: e_pv_kicker, align: TOP_LEFT, x: 40, y: 414, text: "SOLAR PV", text_font: font_fira_xs, text_color: 0x9CA3AF }
+        - label: { id: e_pv_val, align: TOP_LEFT, x: 14, y: 434, text: "-- W", text_font: font_temp_hero, text_color: 0xFFF6EA }
+        - label: { id: e_pv_sub, align: TOP_LEFT, x: 14, y: 461, text: "Today -- kWh", text_font: font_fira_xs, text_color: 0x9CA3AF }
+
+        # === TILE 2: HOME LOAD (x = 212..392) ===
+        - label: { id: e_ld_icon, align: TOP_LEFT, x: 214, y: 412, text: "\U000F1903", text_font: font_icon_sm, text_color: 0x38BDF8 }
+        - label: { id: e_ld_kicker, align: TOP_LEFT, x: 240, y: 414, text: "HOME LOAD", text_font: font_fira_xs, text_color: 0x9CA3AF }
+        - label: { id: e_ld_val, align: TOP_LEFT, x: 214, y: 434, text: "-- W", text_font: font_temp_hero, text_color: 0xFFF6EA }
+        - label: { id: e_ld_sub, align: TOP_LEFT, x: 214, y: 461, text: "Syncing HA...", text_font: font_fira_xs, text_color: 0x9CA3AF }
+
+        # === TILE 3: BATTERY SOC & POWER (x = 412..592) ===
+        - label: { id: e_bt_icon, align: TOP_LEFT, x: 414, y: 412, text: "\U000F0079", text_font: font_icon_sm, text_color: 0x22C55E }
+        - label: { id: e_bt_kicker, align: TOP_LEFT, x: 440, y: 414, text: "BATTERY", text_font: font_fira_xs, text_color: 0x9CA3AF }
+        - label: { id: e_bt_val, align: TOP_LEFT, x: 414, y: 434, text: "--%", text_font: font_temp_hero, text_color: 0xFFF6EA }
+        - label: { id: e_bt_sub, align: TOP_LEFT, x: 492, y: 441, text: "IDLE", text_font: font_fira_xs, text_color: 0x9CA3AF }
+        - bar:
+            id: e_bt_bar
+            x: 414
+            y: 464
+            width: 170
+            height: 8
+            min_value: 0
+            max_value: 100
+            value: 0
+            radius: 4
+            bg_color: 0x1F2937
+            bg_opa: COVER
+            indicator:
+              bg_color: 0x22C55E
+              bg_opa: COVER
+              radius: 4
+
+        # === TILE 4: GRID & TARIFF (x = 612..788) ===
+        - label: { id: e_gr_icon, align: TOP_LEFT, x: 614, y: 412, text: "\U000F0D3E", text_font: font_icon_sm, text_color: 0x9CA3AF }
+        - label: { id: e_gr_kicker, align: TOP_LEFT, x: 640, y: 414, text: "GRID · IDLE", text_font: font_fira_xs, text_color: 0x9CA3AF }
+        - label: { id: e_gr_val, align: TOP_LEFT, x: 614, y: 434, text: "-- W", text_font: font_temp_hero, text_color: 0xFFF6EA }
+        - label: { id: e_gr_sub, align: TOP_LEFT, x: 614, y: 461, text: "Tariff --p", text_font: font_fira_xs, text_color: 0x9CA3AF }
+
+script:
+  - id: render_dock
+    mode: single
+    then:
+      - script.execute: update_dock_1hz
+
+  - id: apply_dock_palette
+    mode: single
+    then:
+      - lambda: |-
+          uint32_t div_col = (id(ui_palette) == 1) ? 0x260407 : ((id(ui_palette) == 2) ? 0x2E1603 : 0x24262D);
+          lv_obj_set_style_bg_color(id(ediv_1), lv_color_hex(div_col), 0);
+          lv_obj_set_style_bg_color(id(ediv_2), lv_color_hex(div_col), 0);
+          lv_obj_set_style_bg_color(id(ediv_3), lv_color_hex(div_col), 0);
+
+  - id: update_dock_1hz
+    mode: single
+    then:
+      - lambda: |-
+          if (!id(boot_complete) || __atomic_load_n(&id(ota_active), __ATOMIC_ACQUIRE)) return;
+
+          auto safe = [](float v) -> float { return std::isnan(v) ? 0.0f : v; };
+          auto fmt_w = [](float watts, char *out, size_t n) {
+            float aw = fabsf(watts);
+            if (aw >= 1000.0f) snprintf(out, n, "%.2f kW", aw / 1000.0f);
+            else snprintf(out, n, "%.0f W", aw);
+          };
+
+          const uint8_t pal = id(ui_palette);
+          const uint32_t txt_hi = (pal == 1) ? 0xE61922 : ((pal == 2) ? 0xFF9418 : 0xFFF6EA);
+          const uint32_t txt_lo = (pal == 1) ? 0x94161E : ((pal == 2) ? 0xAD5A0A : 0x9CA3AF);
+
+          // 1. Solar PV
+          float pv_w = std::max(0.0f, safe(id(energy_pv1_w).state) + safe(id(energy_pv2_w).state));
+          float pv_kwh = std::max(0.0f, safe(id(energy_pv_daily_kwh).state));
+          char buf[32];
+          fmt_w(pv_w, buf, sizeof(buf));
+          lv_label_set_text(id(e_pv_val), buf);
+          lv_obj_set_style_text_color(id(e_pv_val), lv_color_hex(txt_hi), 0);
+          lv_obj_set_style_text_color(id(e_pv_icon), lv_color_hex((pal == 0) ? ((pv_w > 1500.0f) ? 0xFACC15 : ((pv_w >= 35.0f) ? 0xF59E0B : 0x4B5563)) : txt_lo), 0);
+          snprintf(buf, sizeof(buf), "Today %.1f kWh", pv_kwh);
+          lv_label_set_text(id(e_pv_sub), buf);
+          lv_obj_set_style_text_color(id(e_pv_sub), lv_color_hex(txt_lo), 0);
+
+          // 2. Home Load
+          float load_w = std::max(0.0f, safe(id(energy_home_load_w).state));
+          fmt_w(load_w, buf, sizeof(buf));
+          lv_label_set_text(id(e_ld_val), buf);
+          lv_obj_set_style_text_color(id(e_ld_val), lv_color_hex(txt_hi), 0);
+          uint32_t ld_col = (load_w > 6000.0f) ? 0xEF4444 : ((load_w > 3500.0f) ? 0xF97316 : 0x38BDF8);
+          lv_obj_set_style_text_color(id(e_ld_icon), lv_color_hex((pal == 0) ? ld_col : txt_lo), 0);
+          bool iog = id(energy_smart_dispatch).state;
+          bool offp = id(energy_off_peak).state;
+          lv_label_set_text(id(e_ld_sub), iog ? "SMART SLOT" : (offp ? "OFF-PEAK" : ((load_w > 3500.0f) ? "HIGH LOAD" : "NORMAL")));
+          lv_obj_set_style_text_color(id(e_ld_sub), lv_color_hex((pal == 0 && (iog || offp)) ? 0x818CF8 : txt_lo), 0);
+
+          // 3. Battery SoC + Charge/Discharge
+          float soc = std::clamp(safe(id(energy_batt_soc).state), 0.0f, 100.0f);
+          float batt_w = safe(id(energy_batt_power_w).state);
+          snprintf(buf, sizeof(buf), "%.0f%%", soc);
+          lv_label_set_text(id(e_bt_val), buf);
+          lv_obj_set_style_text_color(id(e_bt_val), lv_color_hex(txt_hi), 0);
+          lv_bar_set_value(id(e_bt_bar), (int)roundf(soc), LV_ANIM_OFF);
+          uint32_t bt_col = (soc <= 20.0f) ? 0xEF4444 : ((soc <= 45.0f) ? 0xF59E0B : 0x22C55E);
+          lv_obj_set_style_text_color(id(e_bt_icon), lv_color_hex((pal == 0) ? bt_col : txt_lo), 0);
+          lv_obj_set_style_bg_color(id(e_bt_bar), lv_color_hex((pal == 0) ? bt_col : txt_hi), LV_PART_INDICATOR);
+          if (fabsf(batt_w) < 40.0f) {
+            snprintf(buf, sizeof(buf), "IDLE");
+          } else {
+            char bw[16];
+            fmt_w(batt_w, bw, sizeof(bw));
+            snprintf(buf, sizeof(buf), "%s%s", (batt_w < 0.0f) ? "\u2191" : "\u2193", bw);
+          }
+          lv_label_set_text(id(e_bt_sub), buf);
+          lv_obj_set_style_text_color(id(e_bt_sub), lv_color_hex(txt_lo), 0);
+
+          // 4. Grid Import / Export + Octopus Live Tariff
+          float grid_w = safe(id(energy_grid_power_w).state);
+          float imp_p = safe(id(energy_import_rate).state) * 100.0f;
+          float exp_p = safe(id(energy_export_rate).state) * 100.0f;
+          bool exporting = (grid_w < -50.0f);
+          bool importing = (grid_w > 50.0f);
+          uint32_t gr_col = exporting ? 0x22C55E : (importing ? ((iog || offp) ? 0x818CF8 : 0xF97316) : 0x6B7280);
+          lv_obj_set_style_text_color(id(e_gr_icon), lv_color_hex((pal == 0) ? gr_col : txt_lo), 0);
+          lv_label_set_text(id(e_gr_kicker), exporting ? "GRID · EXPORT" : (importing ? "GRID · IMPORT" : "GRID · IDLE"));
+          fmt_w(grid_w, buf, sizeof(buf));
+          lv_label_set_text(id(e_gr_val), buf);
+          lv_obj_set_style_text_color(id(e_gr_val), lv_color_hex(txt_hi), 0);
+          if (exporting && exp_p > 0.0f) {
+            snprintf(buf, sizeof(buf), "Earn %.1fp/kWh", exp_p);
+          } else if (imp_p > 0.0f) {
+            snprintf(buf, sizeof(buf), "Rate %.1fp/kWh", imp_p);
+          } else {
+            snprintf(buf, sizeof(buf), "Tariff --p");
+          }
+          lv_label_set_text(id(e_gr_sub), buf);
+          lv_obj_set_style_text_color(id(e_gr_sub), lv_color_hex((pal == 0 && exporting) ? 0x22C55E : txt_lo), 0);

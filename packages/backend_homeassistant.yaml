@@ -1,0 +1,511 @@
+# Home Assistant Backend: Native Encrypted API, HA Time, HA ISS Position, 4-Phase Schedule & Diagnostics
+wifi:
+  id: wifi_conn
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: NONE
+  ap:
+    ssid: "${display_name} Fallback"
+    password: !secret ap_password
+
+captive_portal:
+
+api:
+  id: api_conn
+  encryption:
+    key: !secret api_key
+
+time:
+  - platform: homeassistant
+    id: clock_time
+    timezone: "${timezone}"
+    on_time_sync:
+      then:
+        - lambda: 'id(force_redraw) = true;'
+
+button:
+  - platform: restart
+    name: "Restart ${display_name}"
+    entity_category: diagnostic
+
+text_sensor:
+  - platform: version
+    name: "${display_name} ESPHome Version"
+    entity_category: diagnostic
+  - platform: wifi_info
+    ip_address:
+      name: "${display_name} IP Address"
+      entity_category: diagnostic
+  - platform: homeassistant
+    id: ha_location_name
+    entity_id: zone.home
+    attribute: friendly_name
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            if (!x.empty() && x != "Home" && x != "home") {
+              std::string loc = world_clock::to_upper_ascii(x);
+              world_clock::utf8_truncate_codepoints(loc, 12);
+              id(active_loc_name) = loc;
+            }
+
+binary_sensor:
+  - platform: homeassistant
+    id: ha_iss_visible
+    entity_id: ${iss_visible_entity}
+    internal: true
+    on_state:
+      then:
+        - lambda: 'id(iss_is_eclipsed) = !x;'
+
+sensor:
+  - platform: uptime
+    name: "${display_name} Uptime"
+    entity_category: diagnostic
+  - platform: wifi_signal
+    id: wifi_rssi
+    name: "${display_name} Wi-Fi Signal"
+    update_interval: 30s
+    entity_category: diagnostic
+  - platform: homeassistant
+    id: ha_home_lat
+    entity_id: zone.home
+    attribute: latitude
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            if (!std::isnan(x)) { id(active_lat) = x; id(force_redraw) = true; }
+  - platform: homeassistant
+    id: ha_home_lon
+    entity_id: zone.home
+    attribute: longitude
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            if (!std::isnan(x)) { id(active_lon) = x; id(force_redraw) = true; }
+  - platform: homeassistant
+    id: ha_iss_lat
+    entity_id: ${iss_tracker_entity}
+    attribute: latitude
+    internal: true
+  - platform: homeassistant
+    id: ha_iss_lon
+    entity_id: ${iss_tracker_entity}
+    attribute: longitude
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            float in_lat = id(ha_iss_lat).state;
+            float in_lon = x;
+            if (std::isnan(in_lat) || std::isnan(in_lon)) return;
+            uint32_t now_ms = millis();
+            if (id(iss_has_fix)) {
+              float dt_s = (float)(now_ms - id(iss_fix_ms)) / 1000.0f;
+              float dlon = in_lon - id(iss_cur_lon);
+              if (dlon > 180.0f) dlon -= 360.0f;
+              if (dlon < -180.0f) dlon += 360.0f;
+              float dlat = in_lat - id(iss_cur_lat);
+              if (dt_s >= 2.0f && dt_s <= 180.0f) {
+                id(iss_vel_lat) = std::clamp(dlat / dt_s, -0.12f, 0.12f);
+                id(iss_vel_lon) = std::clamp(dlon / dt_s, -0.02f, 0.14f);
+              }
+            } else {
+              id(iss_vel_lat) = 0.0f;
+              id(iss_vel_lon) = 0.060f;
+            }
+            id(iss_cur_lat) = in_lat;
+            id(iss_cur_lon) = in_lon;
+            id(iss_fix_ms) = now_ms;
+            id(iss_has_fix) = true;
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          if (__atomic_load_n(&id(ota_active), __ATOMIC_ACQUIRE)) return;
+
+          auto now = id(clock_time).now();
+          auto utc = id(clock_time).utcnow();
+          uint32_t now_ms = millis();
+          if (!id(boot_grace_done) && now_ms >= 45000UL) id(boot_grace_done) = true;
+
+          // 1. Rollover-Safe Boot Splash State Machine
+          bool wifi_ok = id(wifi_conn).is_connected();
+          bool api_ok  = id(api_conn).is_connected();
+          bool time_ok = utc.is_valid();
+
+          static bool s_wifi_was_down = false;
+          static uint32_t s_wifi_down_ms = 0;
+          bool wifi_timed_out = false;
+          if (!wifi_ok) {
+            if (!s_wifi_was_down) { s_wifi_down_ms = now_ms; s_wifi_was_down = true; }
+            wifi_timed_out = ((uint32_t)(now_ms - s_wifi_down_ms) >= 20000UL);
+          } else {
+            s_wifi_was_down = false;
+          }
+
+          uint8_t next_st = 4;
+          if (!id(boot_complete)) {
+            if (!wifi_ok) next_st = wifi_timed_out ? 5 : 1;
+            else if (!api_ok) next_st = 2;
+            else if (!time_ok) next_st = 3;
+            else next_st = 4;
+          } else if (${fullscreen_watchdog} && (!wifi_ok || !api_ok)) {
+            next_st = !wifi_ok ? (wifi_timed_out ? 5 : 1) : 2;
+          }
+
+          if (next_st != id(overlay_state)) {
+            id(overlay_state) = next_st;
+            if (next_st != 4) {
+              #if LVGL_VERSION_MAJOR >= 9
+                lv_obj_remove_flag(id(splash_overlay), LV_OBJ_FLAG_HIDDEN);
+              #else
+                lv_obj_clear_flag(id(splash_overlay), LV_OBJ_FLAG_HIDDEN);
+              #endif
+              if (next_st == 1) {
+                lv_label_set_text(id(splash_title), "CONNECTING TO WI-FI...");
+                lv_label_set_text(id(splash_sub), "Step 1/3  \u2192  Joining Home Wi-Fi");
+                lv_bar_set_value(id(splash_bar), 28, LV_ANIM_OFF);
+              } else if (next_st == 5) {
+                lv_label_set_text(id(splash_title), "NO WI-FI SIGNAL");
+                lv_label_set_text(id(splash_sub), "Retrying Wi-Fi  ·  Check Router");
+                lv_bar_set_value(id(splash_bar), 28, LV_ANIM_OFF);
+              } else if (next_st == 2) {
+                lv_label_set_text(id(splash_title), "LINKING HOME ASSISTANT...");
+                lv_label_set_text(id(splash_sub), "Step 2/3  \u2192  Wi-Fi Connected · Waiting for HA");
+                lv_bar_set_value(id(splash_bar), 64, LV_ANIM_OFF);
+              } else {
+                lv_label_set_text(id(splash_title), "DRAWING WORLD MAP...");
+                lv_label_set_text(id(splash_sub), "Step 3/3  \u2192  Syncing Clock & Sensors");
+                lv_bar_set_value(id(splash_bar), 90, LV_ANIM_OFF);
+              }
+            }
+          }
+
+          if (!id(boot_complete)) {
+            if (wifi_ok && api_ok && time_ok) {
+              id(boot_complete) = true;
+              id(force_redraw) = true;
+              lv_obj_add_flag(id(splash_overlay), LV_OBJ_FLAG_HIDDEN);
+            } else {
+              return;
+            }
+          } else if (next_st == 4) {
+            lv_obj_add_flag(id(splash_overlay), LV_OBJ_FLAG_HIDDEN);
+          }
+
+          // 2. Daily Min/Max RAM Fallback & Dynamic Token Resolution
+          float cur_t = id(cur_wx_temp);
+          if (now.is_valid() && !std::isnan(cur_t)) {
+            if (id(tracked_yday) != now.day_of_year) {
+              id(tracked_yday) = now.day_of_year;
+              id(tracked_high) = cur_t;
+              id(tracked_low) = cur_t;
+            } else {
+              if (cur_t > id(tracked_high)) id(tracked_high) = cur_t;
+              if (cur_t < id(tracked_low)) id(tracked_low) = cur_t;
+            }
+          }
+
+          // Expire stale ISS fixes (> 5 min without HA update)
+          if (id(iss_has_fix) && (uint32_t)(now_ms - id(iss_fix_ms)) > 300000UL) {
+            id(iss_has_fix) = false;
+            world_clock::sprite_engine().reset_iss_smoothing();
+          }
+
+          const bool use24 = id(use_24h_clock);
+          world_clock::TokenContext tctx{
+              world_clock::to_upper_ascii(id(active_child_name)),
+              world_clock::format_short_time(${winddown_hour}, ${winddown_min}, use24),
+              world_clock::format_short_time(${bedtime_hour}, ${bedtime_min}, use24),
+              world_clock::format_short_time(${quiet_play_hour}, ${quiet_play_min}, use24),
+              world_clock::format_short_time(${wakeup_hour}, ${wakeup_min}, use24),
+          };
+          id(msg_sleep_title_resolved)    = world_clock::expand_tokens("${msg_sleep_title}", tctx);
+          id(msg_sleep_sub_resolved)      = world_clock::expand_tokens("${msg_sleep_sub}", tctx);
+          id(msg_quiet_title_resolved)    = world_clock::expand_tokens("${msg_quiet_title}", tctx);
+          id(msg_quiet_sub_resolved)      = world_clock::expand_tokens("${msg_quiet_sub}", tctx);
+          id(msg_winddown_title_resolved) = world_clock::expand_tokens("${msg_winddown_title}", tctx);
+          id(msg_winddown_sub_resolved)   = world_clock::expand_tokens("${msg_winddown_sub}", tctx);
+          id(msg_xmas_title_resolved)     = world_clock::expand_tokens("${msg_xmas_title}", tctx);
+          id(msg_xmas_sub_resolved)       = world_clock::expand_tokens("${msg_xmas_sub}", tctx);
+
+          // 3. 4-Phase Schedule + Automatic Holiday / Occasion Selection
+          world_clock::ScheduleConfig scfg;
+          scfg.winddown_enabled = ${winddown_enabled};
+          scfg.sleep_enabled = ${sleep_enabled};
+          scfg.quiet_enabled = ${quiet_enabled};
+          scfg.winddown_m = ${winddown_hour} * 60 + ${winddown_min};
+          scfg.bedtime_m = ${bedtime_hour} * 60 + ${bedtime_min};
+          scfg.quiet_m = ${quiet_play_hour} * 60 + ${quiet_play_min};
+          scfg.wakeup_m = ${wakeup_hour} * 60 + ${wakeup_min};
+          scfg.special_delay_m = ${special_night_delay_min};
+
+          std::string sel = id(occasion_select).current_option();
+          uint8_t slp = 0;
+          uint8_t mode = 1;
+
+          if (sel == "Sleep Preview (Red)") {
+            slp = 1; mode = 0;
+          } else if (sel == "Quiet Play Preview (Amber)") {
+            slp = 2; mode = 0;
+          } else if (sel == "Wind-Down Preview (Amber)") {
+            slp = 3; mode = (now.is_valid() && now.month == 12 && now.day_of_month == 24) ? 4 : 0;
+          } else if (sel != "Auto") {
+            slp = 0;
+            if (sel == "Classic Map") mode = 0;
+            else if (sel == "ISS Space Tracker") mode = 1;
+            else if (sel == "Birthday Mode") mode = 2;
+            else if (sel == "Christmas Advent") mode = 3;
+            else if (sel == "Christmas Day") mode = 9;
+            else if (sel == "Santa Tracker") mode = 4;
+            else if (sel == "Halloween") mode = 5;
+            else if (sel == "Easter Egg Hunt") mode = 6;
+            else if (sel == "Fireworks") mode = 7;
+            else if (sel == "Star Wars Day") mode = 8;
+          } else if (now.is_valid()) {
+            int m = now.month, d = now.day_of_month, yr = now.year;
+            bool is_special_night = (m == 12 && (d == 24 || d == 31)) || (m == 11 && d == 5);
+            slp = world_clock::evaluate_schedule(now.hour * 60 + now.minute, scfg, is_special_night);
+
+            const bool kids_holidays = ${kids_holidays_enabled};
+            if (${birthday_enabled} && m == ${default_birth_month} && d == ${default_birth_day}) mode = 2;
+            else if (kids_holidays && m == 12 && d == 25) mode = 9;
+            else if (kids_holidays && m == 12 && d == 24) mode = 4;
+            else if (kids_holidays && m == 12 && d < 24) mode = 3;
+            else if (kids_holidays && m == 10 && d == 31) mode = 5;
+            else if (${fireworks_enabled} && ((m == 11 && d == 5) || (m == 12 && d == 31) || (m == 1 && d == 1))) mode = 7;
+            else if (kids_holidays && m == 5 && d == 4) mode = 8;
+            else if (kids_holidays && world_clock::is_easter_window(yr, m, d)) mode = 6;
+            else mode = ${iss_enabled} ? 1 : 0;
+          }
+
+          uint8_t pal = (slp == 1) ? 1 : ((slp == 2 || slp == 3) ? 2 : 0);
+          bool mode_changed = (slp != id(sleep_phase)) || (mode != id(active_occasion));
+          bool changed = mode_changed || id(force_redraw);
+          if (mode_changed) {
+            id(badge_mode_applied) = 255;
+            if (mode != 4) id(santa_wp_idx) = -1;
+          }
+          id(sleep_phase) = slp;
+          id(ui_palette) = pal;
+          id(active_occasion) = mode;
+          if (changed) {
+            id(force_redraw) = false;
+            id(applied_palette) = 255;
+          }
+
+      - if:
+          condition:
+            lambda: 'return id(boot_complete) && !__atomic_load_n(&id(ota_active), __ATOMIC_ACQUIRE) && id(applied_palette) != id(ui_palette);'
+          then:
+            - script.execute: apply_shell_palette
+
+      # 4-Phase Automatic Circadian Backlight Dimming
+      - if:
+          condition:
+            lambda: 'return id(boot_complete) && !__atomic_load_n(&id(ota_active), __ATOMIC_ACQUIRE) && id(applied_backlight_phase) != id(sleep_phase);'
+          then:
+            - lambda: 'id(applied_backlight_phase) = id(sleep_phase);'
+            - if:
+                condition:
+                  lambda: 'return id(sleep_phase) == 1;'
+                then:
+                  - light.turn_on: { id: display_backlight, brightness: '${sleep_brightness}', transition_length: 1500ms }
+            - if:
+                condition:
+                  lambda: 'return id(sleep_phase) == 2;'
+                then:
+                  - light.turn_on: { id: display_backlight, brightness: '${quiet_brightness}', transition_length: 1500ms }
+            - if:
+                condition:
+                  lambda: 'return id(sleep_phase) == 3;'
+                then:
+                  - light.turn_on: { id: display_backlight, brightness: '${winddown_brightness}', transition_length: 1500ms }
+            - if:
+                condition:
+                  lambda: 'return id(sleep_phase) == 0;'
+                then:
+                  - light.turn_on: { id: display_backlight, brightness: '${day_brightness}', transition_length: 1500ms }
+
+      # Top-Right Wi-Fi & Home Assistant Status Icons + Header Clock & Ticker + Pluggable Dock 1Hz Update
+      - lambda: |-
+          if (__atomic_load_n(&id(ota_active), __ATOMIC_ACQUIRE)) return;
+
+          // Wi-Fi icon
+          if (id(wifi_conn).is_connected()) {
+            float rssi = id(wifi_rssi).state;
+            const char *wico = (std::isnan(rssi) || rssi >= -55.0f) ? "\U000F0928"
+                             : ((rssi >= -67.0f) ? "\U000F0925" : ((rssi >= -77.0f) ? "\U000F0922" : "\U000F091F"));
+            lv_label_set_text(id(wifi_icon_label), wico);
+            lv_obj_set_style_text_color(id(wifi_icon_label), lv_color_hex((id(ui_palette) == 0) ? 0x787882 : 0x7A1812), 0);
+          } else {
+            lv_label_set_text(id(wifi_icon_label), "\U000F05AA");
+            lv_obj_set_style_text_color(id(wifi_icon_label), lv_color_hex(0xE84A18), 0);
+          }
+          // Home Assistant API icon
+          lv_label_set_text(id(sync_icon_label), "\U000F07D0");
+          lv_obj_set_style_text_color(id(sync_icon_label),
+              lv_color_hex(id(api_conn).is_connected() ? ((id(ui_palette) == 0) ? 0x787882 : 0x7A1812) : 0xE84A18), 0);
+
+          if (!id(boot_complete)) return;
+
+          auto now = id(clock_time).now();
+          const bool use24 = id(use_24h_clock);
+          const bool use_mi = id(use_miles);
+          std::string cname = world_clock::to_upper_ascii(id(active_child_name));
+          std::string loc = world_clock::to_upper_ascii(id(active_loc_name));
+          world_clock::utf8_truncate_codepoints(loc, 12);
+
+          static std::string s_last_date, s_last_loc;
+          bool relayout_hdr = false;
+
+          if (now.is_valid()) {
+            char cbuf[24];
+            if (use24) {
+              snprintf(cbuf, sizeof(cbuf), "%02d\u2236%02d\u2236%02d", now.hour, now.minute, now.second);
+              lv_obj_add_flag(id(ampm_label), LV_OBJ_FLAG_HIDDEN);
+              lv_obj_set_x(id(clock_label), -42);
+            } else {
+              int hr12 = now.hour % 12;
+              if (hr12 == 0) hr12 = 12;
+              snprintf(cbuf, sizeof(cbuf), "%d\u2236%02d\u2236%02d", hr12, now.minute, now.second);
+              #if LVGL_VERSION_MAJOR >= 9
+                lv_obj_remove_flag(id(ampm_label), LV_OBJ_FLAG_HIDDEN);
+              #else
+                lv_obj_clear_flag(id(ampm_label), LV_OBJ_FLAG_HIDDEN);
+              #endif
+              lv_obj_set_x(id(clock_label), -84);
+              lv_label_set_text(id(ampm_label), (now.hour >= 12) ? "PM" : "AM");
+            }
+            lv_label_set_text(id(clock_label), cbuf);
+
+            char dbuf[48];
+            now.strftime(dbuf, sizeof(dbuf), "%A, %d %b %Y");
+            if (s_last_date != dbuf) {
+              s_last_date = dbuf;
+              lv_label_set_text(id(date_label), dbuf);
+              relayout_hdr = true;
+            }
+          }
+
+          if (s_last_loc != loc) {
+            s_last_loc = loc;
+            lv_label_set_text(id(loc_label), loc.c_str());
+            relayout_hdr = true;
+          }
+          if (relayout_hdr) {
+            lv_obj_set_size(id(loc_pill), LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+            lv_obj_update_layout(lv_obj_get_parent(id(date_label)));
+            lv_obj_align_to(id(loc_pill), id(date_label), LV_ALIGN_OUT_RIGHT_MID, 10, 0);
+          }
+
+          // Header Ticker
+          world_clock::TokenContext tctx{
+              cname,
+              world_clock::format_short_time(${winddown_hour}, ${winddown_min}, use24),
+              world_clock::format_short_time(${bedtime_hour}, ${bedtime_min}, use24),
+              world_clock::format_short_time(${quiet_play_hour}, ${quiet_play_min}, use24),
+              world_clock::format_short_time(${wakeup_hour}, ${wakeup_min}, use24),
+          };
+          uint8_t slp = id(sleep_phase);
+          uint8_t m = id(active_occasion);
+          std::string tick = "CLASSIC WORLD DAY/NIGHT MAP";
+
+          if (slp == 1) {
+            tick = world_clock::expand_tokens("${msg_sleep_tick}", tctx);
+          } else if (slp == 2) {
+            tick = world_clock::expand_tokens("${msg_quiet_tick}", tctx);
+          } else if (slp == 3) {
+            if (m == 4 && id(keep_santa_winddown) && id(santa_wp_idx) >= 0) {
+              char sw[64];
+              snprintf(sw, sizeof(sw), "SANTA \u2192 %s · GET READY FOR BED!", id(santa_city).c_str());
+              tick = sw;
+            } else {
+              tick = world_clock::expand_tokens("${msg_winddown_tick}", tctx);
+            }
+          } else if (m == 1) {
+            if (!id(iss_has_fix)) {
+              tick = "ISS RADAR  \u2192  SYNCING LIVE ORBITAL FEED...";
+            } else {
+              float ilat = id(iss_cur_lat), ilon = id(iss_cur_lon);
+              float dist_iss = world_clock::haversine_km(id(active_lat), id(active_lon), ilat, ilon);
+              const char *reg = "PACIFIC OCEAN";
+              if (ilon >= -130.0f && ilon < -32.0f) {
+                reg = (ilat >= 12.0f && ilon < -52.0f) ? "NORTH AMERICA" : ((ilat < 12.0f && ilon >= -84.0f) ? "SOUTH AMERICA" : "ATLANTIC OCEAN");
+              } else if (ilon >= -32.0f && ilon < -12.0f) {
+                reg = "ATLANTIC OCEAN";
+              } else if (ilon >= -12.0f && ilon < 48.0f) {
+                reg = (ilat >= 35.0f) ? "UK & EUROPE" : ((ilat >= -36.0f) ? "AFRICA" : "SOUTHERN OCEAN");
+              } else if (ilon >= 48.0f && ilon < 105.0f) {
+                reg = (ilat >= 5.0f) ? "ASIA" : "INDIAN OCEAN";
+              } else if (ilon >= 105.0f && ilon < 165.0f) {
+                reg = (ilat >= 8.0f) ? "EAST ASIA" : "AUSTRALIA";
+              }
+
+              int now_m = now.is_valid() ? (now.hour * 60 + now.minute) : -999;
+              int wake_m = ${wakeup_hour} * 60 + ${wakeup_min};
+              if (dist_iss < 900.0f) {
+                tick = std::string("ISS FLYOVER NEAR ") + loc + " RIGHT NOW!";
+              } else if (${morning_greeting_enabled} && now.is_valid() && now_m >= wake_m && now_m < wake_m + 45) {
+                tick = world_clock::expand_tokens("${msg_wake_tick}", tctx) + " · ISS \u2192 " + reg;
+              } else if (${birthday_enabled} && now.is_valid() && now.month == ${default_birth_month} && now.day_of_month < ${default_birth_day}) {
+                char bbuf[64];
+                snprintf(bbuf, sizeof(bbuf), "%d SLEEPS TO BIRTHDAY! · ISS \u2192 %s", ${default_birth_day} - now.day_of_month, reg);
+                tick = bbuf;
+              } else if (${kids_holidays_enabled} && now.is_valid() && now.month == 10 && now.day_of_month >= 25 && now.day_of_month < 31) {
+                char hbuf[64];
+                snprintf(hbuf, sizeof(hbuf), "%d DAYS TO HALLOWEEN! · ISS \u2192 %s", 31 - now.day_of_month, reg);
+                tick = hbuf;
+              } else {
+                tick = std::string(id(iss_is_eclipsed) ? "ISS (NIGHT SIDE) \u2192 OVER " : "SPACE STATION (ISS) \u2192 OVER ") + reg;
+              }
+            }
+          } else if (m == 2) {
+            int age = std::max(1, now.is_valid() ? (now.year - id(active_birth_year)) : 7);
+            const char *ord = ((age % 100 >= 11 && age % 100 <= 13)) ? "TH"
+                            : ((age % 10 == 1) ? "ST" : ((age % 10 == 2) ? "ND" : ((age % 10 == 3) ? "RD" : "TH")));
+            char bb[64];
+            snprintf(bb, sizeof(bb), "IT'S YOUR %d%s BIRTHDAY, %s!", age, ord, cname.c_str());
+            tick = bb;
+          } else if (m == 3) {
+            int day_dec = (now.is_valid() && now.month == 12) ? std::clamp((int)now.day_of_month, 1, 24) : 16;
+            int sleeps = 25 - day_dec;
+            int filled = (day_dec * 8) / 24;
+            std::string bar = "\uEE03";
+            for (int k = 1; k <= 8; k++) bar += (k <= filled) ? "\uEE04" : "\uEE01";
+            bar += (filled >= 8) ? "\uEE05" : "\uEE02";
+            char xb[64];
+            snprintf(xb, sizeof(xb), " %d %s TO XMAS!", sleeps, (sleeps == 1) ? "SLEEP" : "SLEEPS");
+            tick = std::string("ADVENT ") + bar + xb;
+          } else if (m == 9) {
+            tick = std::string("MERRY CHRISTMAS MORNING, ") + cname + "!";
+          } else if (m == 4) {
+            if (id(santa_wp_idx) < 0) {
+              tick = "CHRISTMAS EVE  \u2192  SLEIGH PREP AT NORTH POLE";
+            } else if (id(santa_dist_km) < 120) {
+              tick = std::string("SANTA IS OVER ") + loc + " RIGHT NOW!";
+            } else {
+              char st_b[64];
+              int d_val = use_mi ? world_clock::km_to_mi(id(santa_dist_km)) : id(santa_dist_km);
+              snprintf(st_b, sizeof(st_b), "SANTA \u2192 %s · %d %s AWAY!", id(santa_city).c_str(), d_val, use_mi ? "MI" : "KM");
+              tick = st_b;
+            }
+          } else if (m == 5) {
+            tick = "SPOOKY HALLOWEEN MODE  ·  HAPPY HALLOWEEN!";
+          } else if (m == 6) {
+            tick = std::string("HAPPY EASTER, ") + cname + "  ·  SPOT THE 5 EGGS!";
+          } else if (m == 7) {
+            tick = (now.is_valid() && now.month == 11) ? "REMEMBER, REMEMBER  ·  BONFIRE NIGHT!"
+                                                       : (std::string("HAPPY NEW YEAR, ") + cname + "!");
+          } else if (m == 8) {
+            tick = "STAR WARS DAY  \u2192  TWIN SUNS & TIE PATROL";
+          }
+          world_clock::utf8_truncate_codepoints(tick, 44);
+          lv_label_set_text(id(ticker_label), tick.c_str());
+
+      - script.execute: update_dock_1hz

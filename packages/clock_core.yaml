@@ -1,0 +1,307 @@
+# Shared Core State, OTA Splash Hooks, Preview Auto-Revert, Map Renderer, 10fps Sprite Engine & Palette Engine
+globals:
+  - { id: bg_cache, type: 'uint8_t *', restore_value: no, initial_value: 'nullptr' }
+  - { id: boot_complete, type: bool, restore_value: no, initial_value: 'false' }
+  - { id: boot_grace_done, type: bool, restore_value: no, initial_value: 'false' }
+  - { id: ota_active, type: bool, restore_value: no, initial_value: 'false' }
+  - { id: force_redraw, type: bool, restore_value: no, initial_value: 'false' }
+  - { id: map_just_flushed, type: bool, restore_value: no, initial_value: 'false' }
+  - { id: sprites_dirty, type: bool, restore_value: no, initial_value: 'true' }
+  - { id: last_ota_pct, type: int, restore_value: no, initial_value: '-5' }
+  - { id: overlay_state, type: uint8_t, restore_value: no, initial_value: '255' }
+  # 0=Day, 1=Deep Sleep (Red), 2=Morning Quiet Play (Amber), 3=Evening Wind-Down (Amber)
+  - { id: sleep_phase, type: uint8_t, restore_value: no, initial_value: '1' }
+  - { id: ui_palette, type: uint8_t, restore_value: no, initial_value: '1' }
+  - { id: applied_palette, type: uint8_t, restore_value: no, initial_value: '255' }
+  - { id: applied_backlight_phase, type: uint8_t, restore_value: no, initial_value: '255' }
+  - { id: active_occasion, type: uint8_t, restore_value: no, initial_value: '1' }
+  - { id: badge_mode_applied, type: uint8_t, restore_value: no, initial_value: '255' }
+  # Active profile & display preferences (populated by HA or Standalone backend)
+  - { id: active_child_name, type: std::string, restore_value: no, initial_value: '"${default_child_name}"' }
+  - { id: active_loc_name, type: std::string, restore_value: no, initial_value: '"${default_location}"' }
+  - { id: active_lat, type: float, restore_value: no, initial_value: '${default_lat}' }
+  - { id: active_lon, type: float, restore_value: no, initial_value: '${default_lon}' }
+  - { id: active_birth_year, type: int, restore_value: no, initial_value: '${default_birth_year}' }
+  - { id: use_24h_clock, type: bool, restore_value: no, initial_value: '${default_use_24h}' }
+  - { id: use_fahrenheit, type: bool, restore_value: no, initial_value: '${default_use_fahrenheit}' }
+  - { id: use_miles, type: bool, restore_value: no, initial_value: '${default_use_miles}' }
+  - { id: show_night_lights, type: bool, restore_value: no, initial_value: '${default_night_lights}' }
+  - { id: keep_santa_winddown, type: bool, restore_value: no, initial_value: '${default_santa_in_winddown}' }
+  # Resolved custom dock messages (tokens like {quiet}/{name} already expanded)
+  - { id: msg_sleep_title_resolved, type: std::string, restore_value: no, initial_value: '"SLEEP TIME"' }
+  - { id: msg_sleep_sub_resolved, type: std::string, restore_value: no, initial_value: '"Sweet dreams!"' }
+  - { id: msg_quiet_title_resolved, type: std::string, restore_value: no, initial_value: '"OK TO GET UP"' }
+  - { id: msg_quiet_sub_resolved, type: std::string, restore_value: no, initial_value: '"Quiet play in your room OK!"' }
+  - { id: msg_winddown_title_resolved, type: std::string, restore_value: no, initial_value: '"GET READY FOR BED"' }
+  - { id: msg_winddown_sub_resolved, type: std::string, restore_value: no, initial_value: '"Pyjamas, teeth & story time!"' }
+  - { id: msg_xmas_title_resolved, type: std::string, restore_value: no, initial_value: '"MERRY CHRISTMAS!"' }
+  - { id: msg_xmas_sub_resolved, type: std::string, restore_value: no, initial_value: '"Time to open presents!"' }
+  # Unified Weather Telemetry (populated by HA sensors or Core 0 Open-Meteo)
+  - { id: cur_wx_temp, type: float, restore_value: no, initial_value: 'NAN' }
+  - { id: cur_wx_feels, type: float, restore_value: no, initial_value: 'NAN' }
+  - { id: cur_wx_high, type: float, restore_value: no, initial_value: 'NAN' }
+  - { id: cur_wx_low, type: float, restore_value: no, initial_value: 'NAN' }
+  - { id: cur_wx_cond, type: std::string, restore_value: no, initial_value: '"cloudy"' }
+  - { id: cur_wx_3day, type: std::string, restore_value: no, initial_value: '""' }
+  - { id: cur_wx_age_ok, type: bool, restore_value: no, initial_value: 'false' }
+  - { id: tracked_yday, type: int, restore_value: no, initial_value: '-1' }
+  - { id: tracked_high, type: float, restore_value: no, initial_value: '-999.0' }
+  - { id: tracked_low, type: float, restore_value: no, initial_value: '999.0' }
+  # Unified ISS Dead-Reckoning State
+  - { id: iss_cur_lat, type: float, restore_value: no, initial_value: '0.0' }
+  - { id: iss_cur_lon, type: float, restore_value: no, initial_value: '0.0' }
+  - { id: iss_vel_lat, type: float, restore_value: no, initial_value: '0.0' }
+  - { id: iss_vel_lon, type: float, restore_value: no, initial_value: '0.06' }
+  - { id: iss_fix_ms, type: uint32_t, restore_value: no, initial_value: '0' }
+  - { id: iss_has_fix, type: bool, restore_value: no, initial_value: 'false' }
+  - { id: iss_is_eclipsed, type: bool, restore_value: no, initial_value: 'false' }
+  # 30-City Santa Route State
+  - { id: santa_wp_idx, type: int, restore_value: no, initial_value: '-1' }
+  - { id: santa_lat, type: float, restore_value: no, initial_value: '75.0' }
+  - { id: santa_lon, type: float, restore_value: no, initial_value: '0.0' }
+  - { id: santa_city, type: std::string, restore_value: no, initial_value: '"NORTH POLE"' }
+  - { id: santa_dist_km, type: int, restore_value: no, initial_value: '0' }
+  - { id: santa_gifts_m, type: int, restore_value: no, initial_value: '0' }
+
+ota:
+  - platform: esphome
+    id: ota_esphome
+    on_begin:
+      then:
+        - component.update: device_prefs
+        - script.execute: ota_splash_begin
+    on_progress:
+      then:
+        - lambda: |-
+            int pct = (int)x;
+            if (pct >= id(last_ota_pct) + 5 || pct >= 99) {
+              id(last_ota_pct) = pct;
+              char obuf[48];
+              snprintf(obuf, sizeof(obuf), "UPDATING CLOCK... %d%%", pct);
+              lv_label_set_text(id(splash_title), obuf);
+              lv_bar_set_value(id(splash_bar), pct, LV_ANIM_OFF);
+              lv_timer_handler();
+            }
+    on_end:
+      then:
+        - script.execute: ota_splash_end
+    on_error:
+      then:
+        - script.execute: ota_splash_error
+
+select:
+  - platform: template
+    name: "Occasion & Preview Mode"
+    id: occasion_select
+    optimistic: true
+    restore_value: false
+    initial_option: "Auto"
+    options:
+      - "Auto"
+      - "Wind-Down Preview (Amber)"
+      - "Sleep Preview (Red)"
+      - "Quiet Play Preview (Amber)"
+      - "Classic Map"
+      - "ISS Space Tracker"
+      - "Birthday Mode"
+      - "Christmas Advent"
+      - "Christmas Day"
+      - "Santa Tracker"
+      - "Halloween"
+      - "Easter Egg Hunt"
+      - "Fireworks"
+      - "Star Wars Day"
+    on_value:
+      then:
+        - lambda: |-
+            id(badge_mode_applied) = 255;
+            id(force_redraw) = true;
+        - if:
+            condition:
+              lambda: 'return x != "Auto";'
+            then:
+              - script.execute: preview_revert_timer
+            else:
+              - script.stop: preview_revert_timer
+
+script:
+  - id: ota_splash_begin
+    mode: single
+    then:
+      - lambda: |-
+          __atomic_store_n(&id(ota_active), true, __ATOMIC_RELEASE);
+          #if defined(USE_WORLD_CLOCK_NET_WORKER)
+            __atomic_store_n(&world_clock::standalone_telemetry().ota_active, true, __ATOMIC_RELEASE);
+          #endif
+          id(last_ota_pct) = -5;
+          #if LVGL_VERSION_MAJOR >= 9
+            lv_obj_remove_flag(id(splash_overlay), LV_OBJ_FLAG_HIDDEN);
+          #else
+            lv_obj_clear_flag(id(splash_overlay), LV_OBJ_FLAG_HIDDEN);
+          #endif
+          lv_label_set_text(id(splash_title), "UPDATING CLOCK... 0%");
+          lv_label_set_text(id(splash_sub), "Installing wireless update  \u2192  Keep power connected");
+          lv_bar_set_value(id(splash_bar), 0, LV_ANIM_OFF);
+          lv_timer_handler();
+
+  - id: ota_splash_end
+    mode: single
+    then:
+      - lambda: |-
+          lv_label_set_text(id(splash_title), "UPDATE COMPLETE  \u2192  REBOOTING!");
+          lv_bar_set_value(id(splash_bar), 100, LV_ANIM_OFF);
+          lv_timer_handler();
+
+  - id: ota_splash_error
+    mode: single
+    then:
+      - lambda: |-
+          __atomic_store_n(&id(ota_active), false, __ATOMIC_RELEASE);
+          #if defined(USE_WORLD_CLOCK_NET_WORKER)
+            __atomic_store_n(&world_clock::standalone_telemetry().ota_active, false, __ATOMIC_RELEASE);
+          #endif
+          id(overlay_state) = 255;
+
+  - id: preview_revert_timer
+    mode: restart
+    then:
+      - delay: 10min
+      - select.set:
+          id: occasion_select
+          option: "Auto"
+
+  - id: render_world_map
+    mode: single
+    then:
+      - lambda: |-
+          if (__atomic_load_n(&id(ota_active), __ATOMIC_ACQUIRE)) return;
+          auto utc = id(clock_time).utcnow();
+          auto loc = id(clock_time).now();
+          world_clock::WorldMapParams p;
+          p.home_lat = id(active_lat);
+          p.home_lon = id(active_lon);
+          if (utc.is_valid()) {
+            p.doy = utc.day_of_year;
+            p.utc_hr = (float)utc.hour + (float)utc.minute / 60.0f + (float)utc.second / 3600.0f;
+          }
+          p.loc_valid = loc.is_valid();
+          if (loc.is_valid()) {
+            p.loc_month = loc.month;
+            p.loc_day = loc.day_of_month;
+          }
+          p.pal = id(ui_palette);
+          p.mode = id(active_occasion);
+          p.sleep_phase = id(sleep_phase);
+          p.santa_wp_idx = id(santa_wp_idx);
+          p.show_night_lights = id(show_night_lights);
+          p.keep_santa_winddown = id(keep_santa_winddown);
+          world_clock::render_world_map_canvas(
+              id(world_canvas), id(bg_cache), p, id(sprites_dirty), id(map_just_flushed));
+
+  - id: apply_shell_palette
+    mode: single
+    then:
+      - lambda: 'id(applied_palette) = id(ui_palette);'
+      - if:
+          condition:
+            lambda: 'return id(ui_palette) == 1;'
+          then:
+            - lvgl.label.update: { id: clock_label, text_color: 0xE61922 }
+            - lvgl.label.update: { id: ampm_label, text_color: 0xD91E26 }
+            - lvgl.label.update: { id: date_label, text_color: 0xD91E26 }
+            - lvgl.widget.update: { id: loc_pill, bg_color: 0x1C0205, border_color: 0x5C0B13 }
+            - lvgl.label.update: { id: loc_label, text_color: 0xFF2B35 }
+            - lvgl.label.update: { id: ticker_label, text_color: 0x8F141B }
+            - lvgl.widget.update: { id: header_divider, bg_color: 0x260407 }
+            - lvgl.widget.update: { id: dock_divider, bg_color: 0x260407 }
+      - if:
+          condition:
+            lambda: 'return id(ui_palette) == 2;'
+          then:
+            - lvgl.label.update: { id: clock_label, text_color: 0xFF9418 }
+            - lvgl.label.update: { id: ampm_label, text_color: 0xE88214 }
+            - lvgl.label.update: { id: date_label, text_color: 0xE88214 }
+            - lvgl.widget.update: { id: loc_pill, bg_color: 0x241102, border_color: 0x6E3805 }
+            - lvgl.label.update: { id: loc_label, text_color: 0xFFA428 }
+            - lvgl.label.update: { id: ticker_label, text_color: 0xC8680A }
+            - lvgl.widget.update: { id: header_divider, bg_color: 0x2E1603 }
+            - lvgl.widget.update: { id: dock_divider, bg_color: 0x2E1603 }
+      - if:
+          condition:
+            lambda: 'return id(ui_palette) == 0;'
+          then:
+            - lvgl.label.update: { id: clock_label, text_color: 0xFFF6EA }
+            - lvgl.label.update: { id: ampm_label, text_color: 0xFF7A00 }
+            - lvgl.label.update: { id: date_label, text_color: 0xEFE6DA }
+            - lvgl.widget.update: { id: loc_pill, bg_color: 0x261302, border_color: 0x7A3E04 }
+            - lvgl.label.update: { id: loc_label, text_color: 0xFF7A00 }
+            - lvgl.label.update: { id: ticker_label, text_color: 0xFFB830 }
+            - lvgl.widget.update: { id: header_divider, bg_color: 0x24262D }
+            - lvgl.widget.update: { id: dock_divider, bg_color: 0x24262D }
+      - script.execute: apply_dock_palette
+      - script.execute: render_world_map
+      - script.execute: render_dock
+
+interval:
+  - interval: 100ms
+    then:
+      - lambda: |-
+          if (__atomic_load_n(&id(ota_active), __ATOMIC_ACQUIRE) || !id(boot_complete) || id(bg_cache) == nullptr) return;
+          auto utc = id(clock_time).utcnow();
+          auto loc = id(clock_time).now();
+          world_clock::SpriteFrameParams p;
+          p.world_canvas = id(world_canvas);
+          p.tracker_badge = id(tracker_badge);
+          p.tracker_badge_lbl = id(tracker_badge_lbl);
+          p.bg_cache = id(bg_cache);
+          p.mode = id(active_occasion);
+          p.sleep_phase = id(sleep_phase);
+          p.keep_santa_winddown = id(keep_santa_winddown);
+          p.manual_santa_preview = (id(occasion_select).current_option() == "Santa Tracker");
+          p.home_lat = id(active_lat);
+          p.home_lon = id(active_lon);
+          p.home_label = id(active_loc_name);
+          p.utc_valid = utc.is_valid();
+          if (utc.is_valid()) {
+            p.utc_month = utc.month;
+            p.utc_day = utc.day_of_month;
+            p.utc_hr = (float)utc.hour + (float)utc.minute / 60.0f + (float)utc.second / 3600.0f;
+          }
+          p.loc_valid = loc.is_valid();
+          if (loc.is_valid()) {
+            p.loc_month = loc.month;
+            p.loc_day = loc.day_of_month;
+          }
+          p.iss_has_fix = id(iss_has_fix);
+          p.iss_cur_lat = id(iss_cur_lat);
+          p.iss_cur_lon = id(iss_cur_lon);
+          p.iss_vel_lat = id(iss_vel_lat);
+          p.iss_vel_lon = id(iss_vel_lon);
+          p.iss_fix_ms = id(iss_fix_ms);
+          p.santa_wp_idx = &id(santa_wp_idx);
+          p.santa_lat = &id(santa_lat);
+          p.santa_lon = &id(santa_lon);
+          p.santa_city = &id(santa_city);
+          p.santa_dist_km = &id(santa_dist_km);
+          p.santa_gifts_m = &id(santa_gifts_m);
+          p.force_redraw = &id(force_redraw);
+          p.sprites_dirty = &id(sprites_dirty);
+          p.map_just_flushed = &id(map_just_flushed);
+          p.badge_mode_applied = &id(badge_mode_applied);
+          world_clock::sprite_engine().tick(p);
+
+  - interval: 60s
+    then:
+      - if:
+          condition:
+            lambda: 'return id(boot_complete) && !__atomic_load_n(&id(ota_active), __ATOMIC_ACQUIRE);'
+          then:
+            - script.execute: render_world_map
+
+  - interval: 5min
+    then:
+      - if:
+          condition:
+            lambda: 'return id(boot_complete) && !__atomic_load_n(&id(ota_active), __ATOMIC_ACQUIRE);'
+          then:
+            - script.execute: render_dock

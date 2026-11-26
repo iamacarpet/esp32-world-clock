@@ -1,0 +1,86 @@
+# Generic Adult / Office Desk World Clock (Home Assistant) with Pluggable 4-Tile Energy Dock!
+# Keeps the World Map, Solar Terminator, Night City Lights & Live ISS Tracker, and swaps Band 3 for Live Energy & Tariff metrics.
+
+substitutions:
+  dev_name: office-world-clock
+  display_name: "Office World Clock"
+  device_comment: "Adult Desk World Map, ISS & Home Energy Clock"
+  splash_kicker_text: "OFFICE WORLD & ENERGY CLOCK"
+  default_child_name: "OFFICE"
+  default_birth_year: "1990"
+  default_birth_month: "1"
+  default_birth_day: "1"
+  default_location: "LONDON UK"
+  default_lat: "51.5074"
+  default_lon: "-0.1278"
+  timezone: "Europe/London"
+  # Subtle Overnight Dimming Only (no kids' wind-down or quiet-play cards)
+  winddown_enabled: "false"
+  winddown_hour: "22"
+  winddown_min: "0"
+  sleep_enabled: "true"
+  bedtime_hour: "23"
+  bedtime_min: "0"
+  quiet_enabled: "false"
+  quiet_play_hour: "6"
+  quiet_play_min: "0"
+  wakeup_hour: "7"
+  wakeup_min: "0"
+  special_night_delay_min: "0"
+  day_brightness: "85%"
+  winddown_brightness: "40%"
+  quiet_brightness: "20%"
+  sleep_brightness: "10%"
+  # Adult Display Preferences (24-hour clock, ISS + subtle Fireworks, skip kids' holidays)
+  default_use_24h: "true"
+  default_use_fahrenheit: "false"
+  default_use_miles: "false"
+  default_night_lights: "true"
+  default_santa_in_winddown: "false"
+  iss_enabled: "true"
+  birthday_enabled: "false"
+  kids_holidays_enabled: "false"
+  fireworks_enabled: "true"
+  morning_greeting_enabled: "false"
+  fullscreen_watchdog: "false"
+  # Overnight ticker (Band 3 stays on the live Energy Dock!)
+  msg_winddown_tick: "EVENING MODE"
+  msg_winddown_title: ""
+  msg_winddown_sub: ""
+  msg_sleep_tick: "OVERNIGHT STANDBY  ·  SOLAR & GRID MONITOR"
+  msg_sleep_title: ""
+  msg_sleep_sub: ""
+  msg_quiet_tick: ""
+  msg_quiet_title: ""
+  msg_quiet_sub: ""
+  msg_wake_tick: ""
+  msg_xmas_title: ""
+  msg_xmas_sub: ""
+  # ISS & Pluggable Energy Dock Home Assistant Entities
+  iss_tracker_entity: "device_tracker.home_iss_position"
+  iss_visible_entity: "binary_sensor.home_iss_visible_now"
+  energy_pv1_entity: "sensor.solar_inverter_pv1_power"
+  energy_pv2_entity: "sensor.solar_inverter_pv2_power"
+  energy_pv_daily_entity: "sensor.solar_inverter_daily_production"
+  energy_home_load_entity: "sensor.solar_inverter_total_load_power"
+  energy_batt_soc_entity: "sensor.solar_inverter_battery_soc"
+  energy_batt_power_entity: "sensor.solar_inverter_battery_power"
+  energy_grid_power_entity: "sensor.solar_inverter_grid_power"
+  energy_import_rate_entity: "sensor.energy_import_current_rate"
+  energy_export_rate_entity: "sensor.energy_export_current_rate"
+  energy_off_peak_entity: "binary_sensor.energy_off_peak"
+  energy_smart_dispatch_entity: "binary_sensor.energy_smart_dispatching"
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [world_clock]
+
+packages:
+  hardware: !include ../packages/hardware_jc8048w550n.yaml
+  fonts: !include ../packages/fonts.yaml
+  ui_shell: !include ../packages/ui_shell.yaml
+  dock: !include ../packages/dock_energy_ha.yaml
+  core: !include ../packages/clock_core.yaml
+  backend: !include ../packages/backend_homeassistant.yaml

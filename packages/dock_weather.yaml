@@ -1,0 +1,302 @@
+# Pluggable Band 3 Dock: Live Weather (Left) + 3-Day Forecast / 4-Phase Sleep / Holiday Stage (Right)
+lvgl:
+  pages:
+    - id: !extend main_page
+      widgets:
+        - canvas:
+            id: dock_canvas
+            x: 0
+            y: 400
+            width: 800
+            height: 80
+
+        - label:
+            id: wx_temp_label
+            align: TOP_LEFT
+            x: 68
+            y: 408
+            text: "--°C"
+            text_font: font_temp_hero
+            text_color: 0xE61922
+
+        - label:
+            id: wx_hl_label
+            align: TOP_LEFT
+            x: 158
+            y: 414
+            text: ""
+            text_font: font_fira_sm
+            text_color: 0xBD1820
+
+        - label:
+            id: wx_cond_label
+            align: TOP_LEFT
+            x: 68
+            y: 444
+            text: "Syncing Weather..."
+            text_font: font_fira_sm
+            text_color: 0x94161E
+
+        - label:
+            id: fc1_day
+            align: TOP_LEFT
+            x: 452
+            y: 412
+            text: "---"
+            text_font: font_fira_xs
+            text_color: 0xD91E26
+        - label:
+            id: fc1_hl
+            align: TOP_LEFT
+            x: 452
+            y: 438
+            text: "--°/--°"
+            text_font: font_fira_sm
+            text_color: 0x94161E
+
+        - label:
+            id: fc2_day
+            align: TOP_LEFT
+            x: 584
+            y: 412
+            text: "---"
+            text_font: font_fira_xs
+            text_color: 0xD91E26
+        - label:
+            id: fc2_hl
+            align: TOP_LEFT
+            x: 584
+            y: 438
+            text: "--°/--°"
+            text_font: font_fira_sm
+            text_color: 0x94161E
+
+        - label:
+            id: fc3_day
+            align: TOP_LEFT
+            x: 716
+            y: 412
+            text: "---"
+            text_font: font_fira_xs
+            text_color: 0xD91E26
+        - label:
+            id: fc3_hl
+            align: TOP_LEFT
+            x: 716
+            y: 438
+            text: "--°/--°"
+            text_font: font_fira_sm
+            text_color: 0x94161E
+
+        - label:
+            id: dock_card_title
+            align: TOP_LEFT
+            x: 468
+            y: 413
+            hidden: true
+            text: "SLEEP TIME"
+            text_font: font_card_title
+            text_color: 0xE61922
+
+        - label:
+            id: dock_card_sub
+            align: TOP_LEFT
+            x: 468
+            y: 442
+            hidden: true
+            text: "Sweet dreams!"
+            text_font: font_card_sub
+            text_color: 0x94161E
+
+script:
+  - id: render_dock
+    mode: single
+    then:
+      - lambda: |-
+          if (__atomic_load_n(&id(ota_active), __ATOMIC_ACQUIRE)) return;
+          auto now_t = id(clock_time).now();
+          world_clock::WeatherDockWidgets w;
+          w.dock_canvas = id(dock_canvas);
+          w.fc_day[0] = id(fc1_day); w.fc_day[1] = id(fc2_day); w.fc_day[2] = id(fc3_day);
+          w.fc_hl[0]  = id(fc1_hl);  w.fc_hl[1]  = id(fc2_hl);  w.fc_hl[2]  = id(fc3_hl);
+          w.card_title = id(dock_card_title);
+          w.card_sub   = id(dock_card_sub);
+
+          world_clock::WeatherDockParams p;
+          p.pal = id(ui_palette);
+          p.sleep_phase = id(sleep_phase);
+          p.mode = id(active_occasion);
+          p.cur_cond = id(cur_wx_cond);
+          p.raw_3day = id(cur_wx_3day);
+          p.child_name = id(active_child_name);
+          p.birth_year = id(active_birth_year);
+          p.loc_valid = now_t.is_valid();
+          if (now_t.is_valid()) {
+            p.loc_year = now_t.year;
+            p.loc_month = now_t.month;
+            p.loc_day = now_t.day_of_month;
+          }
+          p.use_fahrenheit = id(use_fahrenheit);
+          p.use_miles = id(use_miles);
+          p.keep_santa_winddown = id(keep_santa_winddown);
+          p.santa_wp_idx = id(santa_wp_idx);
+          p.santa_city = id(santa_city);
+          p.santa_dist_km = id(santa_dist_km);
+          p.santa_gifts_m = id(santa_gifts_m);
+          p.sleep_title = id(msg_sleep_title_resolved);
+          p.sleep_sub   = id(msg_sleep_sub_resolved);
+          p.quiet_title = id(msg_quiet_title_resolved);
+          p.quiet_sub   = id(msg_quiet_sub_resolved);
+          p.winddown_title = id(msg_winddown_title_resolved);
+          p.winddown_sub   = id(msg_winddown_sub_resolved);
+          p.xmas_title  = id(msg_xmas_title_resolved);
+          p.xmas_sub    = id(msg_xmas_sub_resolved);
+
+          world_clock::render_weather_dock_canvas(w, id(bg_cache), p);
+
+  - id: apply_dock_palette
+    mode: single
+    then:
+      - if:
+          condition:
+            lambda: 'return id(ui_palette) == 1;'
+          then:
+            - lvgl.label.update: { id: wx_temp_label, text_color: 0xE61922 }
+            - lvgl.label.update: { id: wx_hl_label, text_color: 0xBD1820 }
+            - lvgl.label.update: { id: wx_cond_label, text_color: 0x94161E }
+            - lvgl.label.update: { id: dock_card_title, text_color: 0xE61922 }
+            - lvgl.label.update: { id: dock_card_sub, text_color: 0x9E141C }
+      - if:
+          condition:
+            lambda: 'return id(ui_palette) == 2;'
+          then:
+            - lvgl.label.update: { id: wx_temp_label, text_color: 0xFF9418 }
+            - lvgl.label.update: { id: wx_hl_label, text_color: 0xD47210 }
+            - lvgl.label.update: { id: wx_cond_label, text_color: 0xAD5A0A }
+            - lvgl.label.update: { id: dock_card_title, text_color: 0xFFA428 }
+            - lvgl.label.update: { id: dock_card_sub, text_color: 0xD47210 }
+      - if:
+          condition:
+            lambda: 'return id(ui_palette) == 0;'
+          then:
+            - lvgl.label.update: { id: wx_temp_label, text_color: 0xFFF6EA }
+            - lvgl.label.update: { id: wx_hl_label, text_color: 0xD4CFC7 }
+            - lvgl.label.update: { id: wx_cond_label, text_color: 0x9CA3AF }
+            - lvgl.label.update: { id: fc1_day, text_color: 0xFF7A00 }
+            - lvgl.label.update: { id: fc2_day, text_color: 0xFF7A00 }
+            - lvgl.label.update: { id: fc3_day, text_color: 0xFF7A00 }
+            - lvgl.label.update: { id: fc1_hl, text_color: 0xE5DEC9 }
+            - lvgl.label.update: { id: fc2_hl, text_color: 0xE5DEC9 }
+            - lvgl.label.update: { id: fc3_hl, text_color: 0xE5DEC9 }
+            - lvgl.label.update: { id: dock_card_title, text_color: 0xFFB830 }
+            - lvgl.label.update: { id: dock_card_sub, text_color: 0xEFE6DA }
+
+  - id: update_dock_1hz
+    mode: single
+    then:
+      - lambda: |-
+          if (!id(boot_complete) || __atomic_load_n(&id(ota_active), __ATOMIC_ACQUIRE)) return;
+
+          const bool use_f = id(use_fahrenheit);
+          const bool use_mi = id(use_miles);
+          float cur_t = id(cur_wx_temp);
+          float feels = id(cur_wx_feels);
+          uint8_t slp = id(sleep_phase);
+          uint8_t m = id(active_occasion);
+          bool age_ok = id(cur_wx_age_ok);
+
+          // Keep Santa dock card locked at 1Hz with top ticker during Day or Xmas Eve Wind-Down
+          if (m == 4 && (slp == 0 || (slp == 3 && id(keep_santa_winddown)))) {
+            if (id(santa_wp_idx) < 0) {
+              lv_label_set_text(id(dock_card_title), (slp == 3) ? "SANTA PREP · BEDTIME SOON!" : "SANTA PREP · NORTH POLE");
+              lv_label_set_text(id(dock_card_sub), (slp == 3) ? id(msg_winddown_sub_resolved).c_str() : "Elves loading sleigh · Liftoff 10am!");
+            } else {
+              std::string st_hdr = std::string("SANTA \u2192 ") + id(santa_city);
+              lv_label_set_text(id(dock_card_title), st_hdr.c_str());
+              if (slp == 3) {
+                lv_label_set_text(id(dock_card_sub), id(msg_winddown_sub_resolved).c_str());
+              } else {
+                char sb_buf[56];
+                int d_val = use_mi ? world_clock::km_to_mi(id(santa_dist_km)) : id(santa_dist_km);
+                snprintf(sb_buf, sizeof(sb_buf), "%.2fB gifts · %d %s away",
+                         (float)id(santa_gifts_m) / 1000.0f, d_val, use_mi ? "mi" : "km");
+                lv_label_set_text(id(dock_card_sub), sb_buf);
+              }
+            }
+          }
+
+          static std::string s_last_temp;
+          if (!std::isnan(cur_t)) {
+            float disp_t = use_f ? world_clock::c_to_f(cur_t) : cur_t;
+            if (fabsf(disp_t) < 0.05f) disp_t = 0.0f;
+            char tb[16];
+            snprintf(tb, sizeof(tb), use_f ? "%.0f°F" : "%.1f°C", disp_t);
+            if (s_last_temp != tb) {
+              s_last_temp = tb;
+              lv_label_set_text(id(wx_temp_label), tb);
+              lv_obj_update_layout(lv_obj_get_parent(id(wx_temp_label)));
+              lv_obj_align_to(id(wx_hl_label), id(wx_temp_label), LV_ALIGN_OUT_RIGHT_MID, 10, 2);
+            }
+          }
+
+          // Dim stale temperature when offline > 2h in daytime palette
+          if (id(ui_palette) == 0) {
+            lv_obj_set_style_text_color(id(wx_temp_label), lv_color_hex(age_ok ? 0xFFF6EA : 0x6B7280), 0);
+            lv_obj_set_style_text_color(id(wx_hl_label), lv_color_hex(age_ok ? 0xD4CFC7 : 0x4B5563), 0);
+          }
+
+          std::string hl_s;
+          if (!std::isnan(feels)) {
+            float disp_f = use_f ? world_clock::c_to_f(feels) : feels;
+            if (fabsf(disp_f) < 0.5f) disp_f = 0.0f;
+            char fb[24];
+            snprintf(fb, sizeof(fb), "Feels %.0f°", disp_f);
+            hl_s += fb;
+          }
+          float hi = id(cur_wx_high), lo = id(cur_wx_low);
+          bool have_hl = !std::isnan(hi) && !std::isnan(lo);
+          if (!have_hl && id(tracked_yday) >= 0 && id(tracked_high) > -900.0f) {
+            hi = id(tracked_high); lo = id(tracked_low); have_hl = true;
+          }
+          if (have_hl) {
+            float d_hi = use_f ? world_clock::c_to_f(hi) : hi;
+            float d_lo = use_f ? world_clock::c_to_f(lo) : lo;
+            if (fabsf(d_hi) < 0.5f) d_hi = 0.0f;
+            if (fabsf(d_lo) < 0.5f) d_lo = 0.0f;
+            char hb[28];
+            snprintf(hb, sizeof(hb), "%s\u2191%.0f° \u2193%.0f°", hl_s.empty() ? "" : " · ", d_hi, d_lo);
+            hl_s += hb;
+          }
+          lv_label_set_text(id(wx_hl_label), hl_s.c_str());
+
+          if (!age_ok) {
+            lv_label_set_text(id(wx_cond_label), (!id(boot_grace_done)) ? "Syncing Weather..." : "Weather Offline · Retrying");
+          } else {
+            std::string cond = "Cloudy";
+            std::string st = id(cur_wx_cond);
+            for (char &c : st) c = (char)tolower((unsigned char)c);
+            bool wet = false;
+            if (st == "sunny") cond = "Sunny";
+            else if (st == "clear-night") cond = "Clear Night";
+            else if (st == "partlycloudy") cond = "Partly Cloudy";
+            else if (st == "cloudy") cond = "Cloudy";
+            else if (st == "rainy") { cond = "Light Rain"; wet = true; }
+            else if (st == "pouring") { cond = "Heavy Rain"; wet = true; }
+            else if (st == "snowy") { cond = "Snowing!"; wet = true; }
+            else if (st == "snowy-rainy") { cond = "Sleet"; wet = true; }
+            else if (st == "lightning" || st == "lightning-rainy") { cond = "Thunderstorm"; wet = true; }
+            else if (st == "fog") cond = "Foggy";
+            else if (st == "windy" || st == "windy-variant") cond = "Breezy";
+
+            float ref_c = !std::isnan(feels) ? feels : cur_t;
+            const char *tip = "";
+            if (slp != 0) tip = " · Outside Now";
+            else if (wet) tip = " · Pack Raincoat!";
+            else if (!std::isnan(ref_c) && ref_c < 4.5f) tip = " · Big Coat!";
+            else if (!std::isnan(ref_c) && ref_c < 11.5f) tip = " · Jumper Weather";
+            else if (!std::isnan(ref_c) && ref_c > 19.5f) tip = " · T-Shirt Day!";
+
+            std::string line2 = cond + tip;
+            if (line2.size() > 35) line2 = cond;
+            lv_label_set_text(id(wx_cond_label), line2.c_str());
+          }

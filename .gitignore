@@ -1,0 +1,15 @@
+# ESPHome build artifacts & secrets
+/.esphome/
+/examples/.esphome/
+__pycache__/
+*.pyc
+/secrets.yaml
+/examples/secrets.yaml
+*.swp
+*.swo
+*~
+
+# Personal device configurations (keep public examples in examples/)
+/charlie-clock.yaml
+/oliver-clock.yaml
+/office-clock.yaml

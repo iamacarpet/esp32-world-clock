@@ -1,0 +1,42 @@
+# Generic Standalone Kids World & Space Clock ("Leo") — Zero Home Assistant Required!
+# Copy this into your ESPHome config (or reference this GitHub repo via remote packages).
+
+substitutions:
+  dev_name: leo-clock
+  display_name: "Leo World Clock"
+  device_comment: "Standalone Dual-Core Kids World & Space Clock"
+  splash_kicker_text: "LEO'S WORLD & SPACE CLOCK"
+  default_child_name: "LEO"
+  default_birth_date: "2019-06-15"
+  default_birth_year: "2019"
+  default_location: "LONDON UK"
+  default_lat: "51.5074"
+  default_lon: "-0.1278"
+  timezone: "Europe/London"
+  # Default 4-Phase Sleep Schedule (all phases can be toggled & edited live at http://leo-clock.local/)
+  default_winddown_time: "19:00:00"
+  default_bedtime: "19:30:00"
+  default_quiet_time: "05:00:00"
+  default_wakeup_time: "06:30:00"
+  default_use_24h: "false"
+  default_use_fahrenheit: "false"
+  default_use_miles: "false"
+  default_night_lights: "true"
+  default_santa_in_winddown: "true"
+  fullscreen_watchdog: "false"
+
+# Local development source (replace with `type: git, url: https://github.com/<user>/<repo>, ref: main, path: components` for remote builds)
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [world_clock]
+
+# Local packages (replace with remote GitHub `url:` + `files:` once published!)
+packages:
+  hardware: !include ../packages/hardware_jc8048w550n.yaml
+  fonts: !include ../packages/fonts.yaml
+  ui_shell: !include ../packages/ui_shell.yaml
+  dock: !include ../packages/dock_weather.yaml
+  core: !include ../packages/clock_core.yaml
+  backend: !include ../packages/backend_standalone.yaml

@@ -1,0 +1,79 @@
+# Generic Home Assistant Kids World & Space Clock ("Leo") — 4-Phase Circadian Schedule + HA Weather & ISS
+substitutions:
+  dev_name: leo-clock-ha
+  display_name: "Leo World Clock"
+  device_comment: "Home Assistant Kids World & Space Clock"
+  splash_kicker_text: "LEO'S WORLD & SPACE CLOCK"
+  default_child_name: "LEO"
+  default_birth_year: "2019"
+  default_birth_month: "6"
+  default_birth_day: "15"
+  default_location: "LONDON UK"
+  default_lat: "51.5074"
+  default_lon: "-0.1278"
+  timezone: "Europe/London"
+  # 4-Phase Circadian Schedule
+  winddown_enabled: "true"
+  winddown_hour: "19"
+  winddown_min: "0"
+  sleep_enabled: "true"
+  bedtime_hour: "19"
+  bedtime_min: "30"
+  quiet_enabled: "true"
+  quiet_play_hour: "5"
+  quiet_play_min: "0"
+  wakeup_hour: "6"
+  wakeup_min: "30"
+  special_night_delay_min: "0"
+  # Brightness Levels
+  day_brightness: "85%"
+  winddown_brightness: "40%"
+  quiet_brightness: "20%"
+  sleep_brightness: "8%"
+  # Display & Holiday Options
+  default_use_24h: "false"
+  default_use_fahrenheit: "false"
+  default_use_miles: "false"
+  default_night_lights: "true"
+  default_santa_in_winddown: "true"
+  iss_enabled: "true"
+  birthday_enabled: "true"
+  kids_holidays_enabled: "true"
+  fireworks_enabled: "true"
+  morning_greeting_enabled: "true"
+  fullscreen_watchdog: "false"
+  # Screen Wording (supports {name}, {winddown}, {bedtime}, {quiet}, {wakeup})
+  msg_winddown_tick: "BEDTIME AT {bedtime} \u2192 GET READY FOR BED!"
+  msg_winddown_title: "TIME TO GET READY FOR BED"
+  msg_winddown_sub: "PJs, teeth & story · Bed {bedtime}"
+  msg_sleep_tick: "SLEEP TIME · BEFORE {quiet} \u2192 STAY IN BED"
+  msg_sleep_title: "BEFORE {quiet} · SLEEP TIME"
+  msg_sleep_sub: "Can't sleep? Wake Mum & Dad"
+  msg_quiet_tick: "PAST {quiet} · QUIET PLAY IN YOUR ROOM OK"
+  msg_quiet_title: "PAST {quiet} · OK TO GET UP"
+  msg_quiet_sub: "Quiet play in your room OK!"
+  msg_wake_tick: "GOOD MORNING, {name}!"
+  msg_xmas_title: "MERRY CHRISTMAS!"
+  msg_xmas_sub: "Time for presents, {name}!"
+  # Home Assistant Entities
+  weather_entity: "weather.forecast_home"
+  wx_high_entity: "sensor.weather_forecast_high"
+  wx_low_entity: "sensor.weather_forecast_low"
+  wx_3day_entity: "sensor.clock_3day_forecast"
+  iss_tracker_entity: "device_tracker.home_iss_position"
+  iss_visible_entity: "binary_sensor.home_iss_visible_now"
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [world_clock]
+
+packages:
+  hardware: !include ../packages/hardware_jc8048w550n.yaml
+  fonts: !include ../packages/fonts.yaml
+  ui_shell: !include ../packages/ui_shell.yaml
+  dock: !include ../packages/dock_weather.yaml
+  ha_weather: !include ../packages/ha_weather_sensors.yaml
+  core: !include ../packages/clock_core.yaml
+  backend: !include ../packages/backend_homeassistant.yaml

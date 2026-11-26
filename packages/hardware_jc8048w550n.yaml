@@ -1,0 +1,98 @@
+# Guition JC8048W550N (ESP32-S3, 16MB Flash, 8MB Octal PSRAM, 800x480 16-bit RGB LCD)
+esphome:
+  name: ${dev_name}
+  friendly_name: ${display_name}
+  comment: "${device_comment}"
+  on_boot:
+    - priority: -100
+      then:
+        # Gentle 15% boot glow prevents blinding a sleeping room on a midnight power blip
+        - light.turn_on:
+            id: display_backlight
+            brightness: 15%
+            transition_length: 200ms
+
+world_clock: {}
+
+esp32:
+  variant: esp32s3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+    advanced:
+      execute_from_psram: true
+
+preferences:
+  id: device_prefs
+  flash_write_interval: 5min
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: INFO
+
+safe_mode:
+
+# Tuned 19.5kHz Flicker-Free PWM Backlight (GPIO2)
+output:
+  - platform: ledc
+    id: gpio_backlight_pwm
+    pin: GPIO2
+    frequency: 19531Hz
+    min_power: 0.05
+    zero_means_zero: true
+
+light:
+  - platform: monochromatic
+    name: "Screen Backlight"
+    id: display_backlight
+    output: gpio_backlight_pwm
+    gamma_correct: 1.5
+    restore_mode: ALWAYS_OFF
+    default_transition_length: 500ms
+
+display:
+  - platform: mipi_rgb
+    id: main_display
+    model: RPI
+    color_order: RGB
+    invert_colors: true
+    update_interval: never
+    auto_clear_enabled: false
+    dimensions:
+      width: 800
+      height: 480
+    de_pin: GPIO40
+    hsync_pin: GPIO39
+    vsync_pin: GPIO41
+    pclk_pin: GPIO42
+    pclk_frequency: 14MHz
+    pclk_inverted: true
+    hsync_pulse_width: 4
+    hsync_back_porch: 8
+    hsync_front_porch: 8
+    vsync_pulse_width: 4
+    vsync_back_porch: 8
+    vsync_front_porch: 8
+    data_pins:
+      red:
+        - GPIO45
+        - GPIO48
+        - GPIO47
+        - GPIO21
+        - GPIO14
+      green:
+        - GPIO5
+        - GPIO6
+        - GPIO7
+        - GPIO15
+        - GPIO16
+        - GPIO4
+      blue:
+        - GPIO8
+        - GPIO3
+        - GPIO46
+        - GPIO9
+        - GPIO1

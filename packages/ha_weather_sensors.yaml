@@ -1,0 +1,61 @@
+# Home Assistant Weather Entities (include alongside packages/dock_weather.yaml for HA weather clocks)
+text_sensor:
+  - platform: homeassistant
+    id: ha_wx_cond
+    entity_id: ${weather_entity}
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            id(cur_wx_cond) = x;
+            id(cur_wx_age_ok) = true;
+            id(force_redraw) = true;
+
+  - platform: homeassistant
+    id: ha_wx_3day
+    entity_id: ${wx_3day_entity}
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            id(cur_wx_3day) = x;
+            id(force_redraw) = true;
+
+sensor:
+  - platform: homeassistant
+    id: ha_wx_temp
+    entity_id: ${weather_entity}
+    attribute: temperature
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            if (!std::isnan(x)) {
+              id(cur_wx_temp) = x;
+              id(cur_wx_age_ok) = true;
+            }
+
+  - platform: homeassistant
+    id: ha_wx_feels
+    entity_id: ${weather_entity}
+    attribute: apparent_temperature
+    internal: true
+    on_value:
+      then:
+        - lambda: 'if (!std::isnan(x)) id(cur_wx_feels) = x;'
+
+  - platform: homeassistant
+    id: ha_wx_high
+    entity_id: ${wx_high_entity}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'if (!std::isnan(x)) id(cur_wx_high) = x;'
+
+  - platform: homeassistant
+    id: ha_wx_low
+    entity_id: ${wx_low_entity}
+    internal: true
+    on_value:
+      then:
+        - lambda: 'if (!std::isnan(x)) id(cur_wx_low) = x;'
