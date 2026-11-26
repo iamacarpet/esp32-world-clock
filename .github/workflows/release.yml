@@ -72,8 +72,8 @@ jobs:
       - name: Compile universal standalone ESP32-S3 firmware
         run: esphome compile examples/world-clock-standalone-release.yaml
 
-      - name: Run headless emulator for release media
-        run: python3 scripts/run_emulator.py --out sim_output
+      - name: Run headless emulator for release media (17 PNGs + 11 x 30s MP4 videos)
+        run: python3 scripts/run_emulator.py --out sim_output --video-seconds 30
 
       - name: Package release assets
         run: |

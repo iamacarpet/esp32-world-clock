@@ -1,5 +1,6 @@
 # Headless Emulator: Generic Kids Standalone Clock ("Leo") — Captures All Operational Modes!
 # Runs the REAL LVGL 9.5 UI, fonts, World Map, Weather Dock, and 10fps Sprite Engine on Linux host.
+# Control animated video duration via env var SIM_VIDEO_SECONDS (default: 30, range: 3..60).
 
 substitutions:
   dev_name: leo-clock-sim
@@ -31,6 +32,9 @@ packages:
   ui_shell: !include ../packages/ui_shell.yaml
   dock: !include ../packages/dock_weather.yaml
   core: !include ../packages/clock_core.yaml
+
+globals:
+  - { id: sim_video_secs, type: int, restore_value: no, initial_value: '30' }
 
 script:
   - id: sim_sync_ui
@@ -192,16 +196,37 @@ script:
       - script.execute: sim_sync_ui
       - script.wait: sim_sync_ui
       - script.wait: apply_shell_palette
-      - delay: 180ms
+      - delay: 200ms
       - script.execute: sim_sync_ui
       - script.wait: sim_sync_ui
       - lambda: 'lv_refr_now(nullptr);'
-      - delay: 80ms
+      - delay: 100ms
+
+  # Stabilises an animated scene for 1.5s, then records a 10fps animated video of SIM_VIDEO_SECONDS length
+  - id: sim_record_video
+    mode: single
+    parameters:
+      filename: string
+    then:
+      - delay: 1500ms
+      - lambda: |-
+          lv_refr_now(nullptr);
+          uint32_t frames = (uint32_t)id(sim_video_secs) * 10U;
+          ESP_LOGI("sim", "Recording %s (%u frames @ 10 fps = %ds)...", filename.c_str(), frames, id(sim_video_secs));
+          id(main_display).take_animation(filename.c_str(), frames, 10.0f);
+      - delay: !lambda 'return (uint32_t)id(sim_video_secs) * 1000U + 1200U;'
 
   - id: run_capture_suite
     mode: single
     then:
-      # 01. Boot Splash Screen (showing MAC-derived multi-device URL & login discoverability!)
+      # Read SIM_VIDEO_SECONDS env var (default 30s, clamped 3..60s)
+      - lambda: |-
+          const char *env_s = std::getenv("SIM_VIDEO_SECONDS");
+          int secs = (env_s != nullptr && env_s[0] != '\0') ? std::atoi(env_s) : 30;
+          id(sim_video_secs) = std::clamp(secs, 3, 60);
+          ESP_LOGI("sim", "Configured video capture duration: %d seconds per animated mode", id(sim_video_secs));
+
+      # 01. Boot Splash Screen (MAC-derived multi-device URL & login discoverability)
       - lambda: |-
           lv_label_set_text(id(splash_kicker), "LEO'S WORLD & SPACE CLOCK");
           lv_label_set_text(id(splash_title), "CLOCK READY!");
@@ -212,7 +237,7 @@ script:
       - delay: 200ms
       - snapshot.take: { id: main_display, filename: "01_boot_splash.bmp" }
 
-      # Dismiss splash and populate simulated weather + ISS telemetry
+      # Dismiss splash and populate initial simulated weather + ISS telemetry
       - lambda: |-
           id(boot_complete) = true;
           lv_obj_add_flag(id(splash_overlay), LV_OBJ_FLAG_HIDDEN);
@@ -231,7 +256,7 @@ script:
           id(iss_has_fix) = true;
           id(iss_is_eclipsed) = false;
 
-      # 02. Daytime Classic + Live ISS Space Tracker + Sunny Weather (2026-06-21 14:30:00 BST = 13:30:00Z)
+      # 02. Daytime Classic + Live ISS Space Tracker + Sunny Weather (2026-06-21 14:30 BST)
       - lambda: |-
           id(clock_time).set_epoch(1782048600);
           id(iss_fix_ms) = millis();
@@ -242,17 +267,20 @@ script:
       - lambda: 'lv_refr_now(nullptr);'
       - snapshot.take: { id: main_display, filename: "02_daytime_iss_sunny.bmp" }
 
-      # Video 1: Live ISS Orbit (35 frames @ 10fps = 3.5s, accelerated orbital drift for clear motion!)
+      # Video 01: Live ISS Orbit sweeping smoothly across Atlantic & Europe
       - lambda: |-
-          id(iss_cur_lat) = 32.0f;
-          id(iss_cur_lon) = -30.0f;
-          id(iss_vel_lat) = 4.0f;
-          id(iss_vel_lon) = 16.0f;
+          float scale = 30.0f / (float)id(sim_video_secs);
+          id(iss_cur_lat) = -5.0f;
+          id(iss_cur_lon) = -80.0f;
+          id(iss_vel_lat) = 1.6f * scale;
+          id(iss_vel_lon) = 3.8f * scale;
           id(iss_fix_ms) = millis();
-      - snapshot.take: { id: main_display, filename: "video_iss_orbit.gif", frames: 35, frame_rate: 10 fps }
-      - delay: 4200ms
+      - script.execute:
+          id: sim_record_video
+          filename: "video_01_iss_orbit.gif"
+      - script.wait: sim_record_video
 
-      # 03. Daytime Fog Icon + Imperial Units (°F & Miles) (2026-11-12 08:45:00 GMT)
+      # 03. Daytime Fog Icon + Imperial Units (°F & Miles) (2026-11-12 08:45 GMT)
       - lambda: |-
           id(iss_cur_lat) = 48.0f;
           id(iss_cur_lon) = 5.0f;
@@ -284,7 +312,7 @@ script:
           id(cur_wx_cond) = "partlycloudy";
           id(cur_wx_3day) = "FRI,cloudy,11,6|SAT,rainy,10,4|SUN,sunny,13,7";
 
-      # 04. Evening Wind-Down (Amber) — 2026-11-12 19:12:00 GMT
+      # 04. Evening Wind-Down (Amber) — 2026-11-12 19:12 GMT
       - lambda: |-
           id(clock_time).set_epoch(1794510720);
           id(force_redraw) = true;
@@ -292,7 +320,7 @@ script:
       - script.wait: sim_flush
       - snapshot.take: { id: main_display, filename: "04_evening_winddown_amber.bmp" }
 
-      # 05. Deep Sleep Mode (Red + Real Lunar Phase) — 2026-11-21 02:15:00 GMT
+      # 05. Deep Sleep Mode (Red + Real Lunar Phase) — 2026-11-21 02:15 GMT
       - lambda: |-
           id(cur_wx_cond) = "clear-night";
           id(clock_time).set_epoch(1795227300);
@@ -301,7 +329,7 @@ script:
       - script.wait: sim_flush
       - snapshot.take: { id: main_display, filename: "05_deep_sleep_red.bmp" }
 
-      # 06. Morning Quiet Play (Amber + Rising Sun) — 2026-11-21 05:20:00 GMT
+      # 06. Morning Quiet Play (Amber + Rising Sun) — 2026-11-21 05:20 GMT
       - lambda: |-
           id(clock_time).set_epoch(1795238400);
           id(force_redraw) = true;
@@ -309,7 +337,7 @@ script:
       - script.wait: sim_flush
       - snapshot.take: { id: main_display, filename: "06_morning_quiet_amber.bmp" }
 
-      # 07. Birthday Mode — 2026-06-15 08:15:00 BST (07:15:00Z)
+      # 07. Birthday Mode — 2026-06-15 08:15 BST + Video 02 (floating balloons & confetti)
       - lambda: |-
           id(cur_wx_temp) = 19.4f;
           id(cur_wx_feels) = 19.0f;
@@ -320,13 +348,18 @@ script:
           id(force_redraw) = true;
       - script.execute: sim_flush
       - script.wait: sim_flush
-      - delay: 300ms
+      - delay: 400ms
       - lambda: 'lv_refr_now(nullptr);'
       - snapshot.take: { id: main_display, filename: "07_birthday_mode.bmp" }
+      - script.execute:
+          id: sim_record_video
+          filename: "video_02_birthday.gif"
+      - script.wait: sim_record_video
 
-      # 08. Halloween — 2026-10-31 17:30:00 GMT
+      # 08. Halloween — 2026-10-31 17:30 GMT + Video 03 (drifting ghosts & bats)
       - lambda: |-
           id(cur_wx_temp) = 10.5f;
+          id(cur_wx_feels) = 8.5f;
           id(cur_wx_high) = 13.0f;
           id(cur_wx_low) = 6.0f;
           id(cur_wx_cond) = "cloudy";
@@ -334,11 +367,15 @@ script:
           id(force_redraw) = true;
       - script.execute: sim_flush
       - script.wait: sim_flush
-      - delay: 300ms
+      - delay: 400ms
       - lambda: 'lv_refr_now(nullptr);'
       - snapshot.take: { id: main_display, filename: "08_halloween.bmp" }
+      - script.execute:
+          id: sim_record_video
+          filename: "video_03_halloween.gif"
+      - script.wait: sim_record_video
 
-      # 09. Christmas Advent — 2026-12-12 16:30:00 GMT
+      # 09. Christmas Advent — 2026-12-12 16:30 GMT + Video 04 (snow & twinkling tree)
       - lambda: |-
           id(cur_wx_temp) = 2.0f;
           id(cur_wx_feels) = -1.0f;
@@ -350,13 +387,18 @@ script:
           id(force_redraw) = true;
       - script.execute: sim_flush
       - script.wait: sim_flush
-      - delay: 300ms
+      - delay: 400ms
       - lambda: 'lv_refr_now(nullptr);'
       - snapshot.take: { id: main_display, filename: "09_christmas_advent.bmp" }
+      - script.execute:
+          id: sim_record_video
+          filename: "video_04_christmas_advent.gif"
+      - script.wait: sim_record_video
 
-      # 10. Christmas Eve Daytime Santa Tracker — 2026-12-24 15:30:00 GMT
+      # 10. Christmas Eve Daytime Santa Tracker — 2026-12-24 15:00 GMT + Video 05 (gliding across route)
       - lambda: |-
-          id(clock_time).set_epoch(1798126200, 120.0);
+          double santa_scale = 3600.0 / (double)id(sim_video_secs);
+          id(clock_time).set_epoch(1798124400, santa_scale);
           id(force_redraw) = true;
       - script.execute: sim_flush
       - script.wait: sim_flush
@@ -367,14 +409,15 @@ script:
       - script.wait: render_dock
       - lambda: 'lv_refr_now(nullptr);'
       - snapshot.take: { id: main_display, filename: "10_christmas_eve_santa_day.bmp" }
+      - script.execute:
+          id: sim_record_video
+          filename: "video_05_santa_tracker.gif"
+      - script.wait: sim_record_video
 
-      # Video 2: Live Santa Tracker Gliding (35 frames @ 10fps = 3.5s)
-      - snapshot.take: { id: main_display, filename: "video_santa_tracker.gif", frames: 35, frame_rate: 10 fps }
-      - delay: 4200ms
-
-      # 11. Christmas Eve Evening Wind-Down (Amber + Santa STILL Flying!) — 2026-12-24 19:15:00 GMT
+      # 11. Christmas Eve Wind-Down (Amber + Santa STILL Flying!) — 2026-12-24 19:02..19:27 GMT + Video 06
       - lambda: |-
-          id(clock_time).set_epoch(1798139700, 1.0);
+          double wd_scale = 1400.0 / (double)id(sim_video_secs);
+          id(clock_time).set_epoch(1798138920, wd_scale);
           id(force_redraw) = true;
       - script.execute: sim_flush
       - script.wait: sim_flush
@@ -385,102 +428,128 @@ script:
       - script.wait: render_dock
       - lambda: 'lv_refr_now(nullptr);'
       - snapshot.take: { id: main_display, filename: "11_christmas_eve_santa_winddown.bmp" }
+      - script.execute:
+          id: sim_record_video
+          filename: "video_06_santa_winddown.gif"
+      - script.wait: sim_record_video
 
-      # 12. Christmas Day Morning — 2026-12-25 07:30:00 GMT
+      # 12. Christmas Day Morning — 2026-12-25 07:30 GMT + Video 07 (snow & festive lights)
       - lambda: |-
           id(cur_wx_temp) = 1.0f;
+          id(cur_wx_feels) = -2.0f;
           id(cur_wx_cond) = "snowy";
-          id(clock_time).set_epoch(1798183800);
+          id(clock_time).set_epoch(1798183800, 1.0);
           id(force_redraw) = true;
       - script.execute: sim_flush
       - script.wait: sim_flush
-      - delay: 300ms
+      - delay: 400ms
       - lambda: 'lv_refr_now(nullptr);'
       - snapshot.take: { id: main_display, filename: "12_christmas_day.bmp" }
+      - script.execute:
+          id: sim_record_video
+          filename: "video_07_christmas_day.gif"
+      - script.wait: sim_record_video
 
-      # 13. Easter Egg Hunt — 2026-04-05 10:00:00 BST (09:00:00Z)
+      # 13. Easter Egg Hunt — 2026-04-05 10:00 BST + Video 08 (hopping bunny & sparkling eggs)
       - lambda: |-
           id(cur_wx_temp) = 14.5f;
+          id(cur_wx_feels) = 13.5f;
           id(cur_wx_high) = 17.0f;
           id(cur_wx_low) = 7.0f;
           id(cur_wx_cond) = "partlycloudy";
-          id(clock_time).set_epoch(1775379600);
+          id(clock_time).set_epoch(1775379600, 1.0);
           id(force_redraw) = true;
       - script.execute: sim_flush
       - script.wait: sim_flush
-      - delay: 300ms
+      - delay: 400ms
       - lambda: 'lv_refr_now(nullptr);'
       - snapshot.take: { id: main_display, filename: "13_easter_egg_hunt.bmp" }
+      - script.execute:
+          id: sim_record_video
+          filename: "video_08_easter_egg_hunt.gif"
+      - script.wait: sim_record_video
 
-      # 14. New Year's Eve Fireworks (Evening before bedtime!) — 2026-12-31 18:45:00 GMT
+      # 14. New Year's Eve Fireworks — 2026-12-31 18:45 GMT + Video 09 (multi-color starbursts)
       - lambda: |-
           id(cur_wx_temp) = 4.0f;
           id(cur_wx_feels) = 2.0f;
           id(cur_wx_high) = 6.0f;
           id(cur_wx_low) = 1.0f;
           id(cur_wx_cond) = "clear-night";
-          id(clock_time).set_epoch(1798742700);
+          id(clock_time).set_epoch(1798742700, 1.0);
           id(force_redraw) = true;
       - script.execute: sim_flush
       - script.wait: sim_flush
       - delay: 1100ms
       - lambda: 'lv_refr_now(nullptr);'
       - snapshot.take: { id: main_display, filename: "14_nye_fireworks.bmp" }
+      - script.execute:
+          id: sim_record_video
+          filename: "video_09_nye_fireworks.gif"
+      - script.wait: sim_record_video
 
-      # Video 3: Fireworks Bursting (35 frames @ 10fps = 3.5s)
-      - snapshot.take: { id: main_display, filename: "video_fireworks.gif", frames: 35, frame_rate: 10 fps }
-      - delay: 4200ms
-
-      # 15. Star Wars Day — 2026-05-04 14:00:00 BST (13:00:00Z)
+      # 15. Star Wars Day — 2026-05-04 14:00 BST + Video 10 (twin suns & TIE patrol)
       - lambda: |-
           id(cur_wx_temp) = 16.0f;
+          id(cur_wx_feels) = 15.0f;
           id(cur_wx_high) = 19.0f;
           id(cur_wx_low) = 9.0f;
           id(cur_wx_cond) = "sunny";
-          id(clock_time).set_epoch(1777899600);
+          id(clock_time).set_epoch(1777899600, 1.0);
           id(force_redraw) = true;
       - script.execute: sim_flush
       - script.wait: sim_flush
-      - delay: 300ms
+      - delay: 400ms
       - lambda: 'lv_refr_now(nullptr);'
       - snapshot.take: { id: main_display, filename: "15_star_wars_day.bmp" }
+      - script.execute:
+          id: sim_record_video
+          filename: "video_10_star_wars_day.gif"
+      - script.wait: sim_record_video
 
-      # Video 4: Full 4-Phase Circadian Cycle Walkthrough (40 frames @ 8fps = 5.0s)
+      # Video 11: Full 4-Phase Circadian Cycle Walkthrough (5 equal stages across SIM_VIDEO_SECONDS)
       - lambda: |-
           id(cur_wx_temp) = 11.4f;
+          id(cur_wx_feels) = 10.2f;
           id(cur_wx_high) = 14.0f;
           id(cur_wx_low) = 6.0f;
           id(cur_wx_cond) = "partlycloudy";
           id(cur_wx_3day) = "FRI,cloudy,11,6|SAT,rainy,10,4|SUN,sunny,13,7";
           id(iss_cur_lat) = 42.0f;
           id(iss_cur_lon) = -5.0f;
+          id(iss_vel_lat) = 0.05f;
+          id(iss_vel_lon) = 0.08f;
           id(iss_fix_ms) = millis();
-          id(clock_time).set_epoch(1794509400);  // 18:50 Day
+          id(clock_time).set_epoch(1794509400, 1.0);  // 18:50 Day
           id(force_redraw) = true;
       - script.execute: sim_flush
       - script.wait: sim_flush
-      - snapshot.take: { id: main_display, filename: "video_circadian_cycle.gif", frames: 40, frame_rate: 8 fps }
-      - delay: 1100ms
+      - delay: 500ms
       - lambda: |-
-          id(clock_time).set_epoch(1794510720);  // 19:12 Evening Wind-Down (Amber)
+          uint32_t frames = (uint32_t)id(sim_video_secs) * 10U;
+          ESP_LOGI("sim", "Recording video_11_circadian_cycle.gif (%u frames @ 10 fps = %ds)...", frames, id(sim_video_secs));
+          id(main_display).take_animation("video_11_circadian_cycle.gif", frames, 10.0f);
+      - delay: !lambda 'return (uint32_t)id(sim_video_secs) * 200U;'
+      - lambda: |-
+          id(clock_time).set_epoch(1794510720, 1.0);  // 19:12 Evening Wind-Down (Amber)
           id(force_redraw) = true;
       - script.execute: sim_sync_ui
-      - delay: 1200ms
+      - delay: !lambda 'return (uint32_t)id(sim_video_secs) * 200U;'
       - lambda: |-
-          id(clock_time).set_epoch(1795227300);  // 02:15 Deep Sleep (Red)
+          id(clock_time).set_epoch(1795227300, 1.0);  // 02:15 Deep Sleep (Red)
           id(force_redraw) = true;
       - script.execute: sim_sync_ui
-      - delay: 1200ms
+      - delay: !lambda 'return (uint32_t)id(sim_video_secs) * 200U;'
       - lambda: |-
-          id(clock_time).set_epoch(1795238400);  // 05:20 Morning Quiet Play (Amber)
+          id(clock_time).set_epoch(1795238400, 1.0);  // 05:20 Morning Quiet Play (Amber)
           id(force_redraw) = true;
       - script.execute: sim_sync_ui
-      - delay: 1200ms
+      - delay: !lambda 'return (uint32_t)id(sim_video_secs) * 200U;'
       - lambda: |-
-          id(clock_time).set_epoch(1795243200);  // 06:40 Wake-Up Day!
+          id(clock_time).set_epoch(1795243200, 1.0);  // 06:40 Wake-Up Day!
           id(force_redraw) = true;
       - script.execute: sim_sync_ui
-      - delay: 1200ms
+      - delay: !lambda 'return (uint32_t)id(sim_video_secs) * 200U + 1200U;'
       - lambda: |-
           ESP_LOGI("sim", "All Leo standalone simulator captures complete! Exiting cleanly.");
           std::exit(0);

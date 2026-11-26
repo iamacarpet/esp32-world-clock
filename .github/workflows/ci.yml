@@ -55,8 +55,8 @@ jobs:
       - name: Install ESPHome ${{ env.ESPHOME_VERSION }}
         run: pip install --no-cache-dir "esphome==${{ env.ESPHOME_VERSION }}"
 
-      - name: Run headless emulators & capture all modes
-        run: python3 scripts/run_emulator.py --out sim_output
+      - name: Run headless emulators & capture all modes (17 PNGs + 11 x 30s MP4 videos)
+        run: python3 scripts/run_emulator.py --out sim_output --video-seconds 30
 
       - name: Upload emulator screenshots & videos
         uses: actions/upload-artifact@v4

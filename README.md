@@ -127,13 +127,14 @@ This repo includes a native **ESPHome `host:` + `SnapshotDisplay` headless emula
 # Run C++ unit tests (4-phase schedule, Easter boundaries, lunar phase, UTF-8, JSON)
 g++ -std=c++17 -Wall -Wextra -Werror -Icomponents/world_clock tests/test_clock_math.cpp -o /tmp/test_clock_math && /tmp/test_clock_math
 
-# Run the headless emulator locally to capture all 17 mode PNGs, contact sheet & animated GIFs/MP4s
-python3 scripts/run_emulator.py --out sim_output
+# Run the headless emulator locally to capture all 17 mode PNGs, contact sheet & 11 animated mode videos
+# (defaults to 30s per animated mode; pass --video-seconds 5 for fast local iteration or 60 for longer reels)
+python3 scripts/run_emulator.py --out sim_output --video-seconds 30
 ```
 
 ### GitHub Actions Workflows
 - **CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml))** — Runs on every push to `master`/`main` and every PR:
   1. C++ unit tests (`-Wall -Wextra -Werror`)
   2. Real ESP32-S3 firmware compilation across all 4 example/release configs (`leo-clock-standalone`, `world-clock-standalone-release`, `leo-clock-ha`, `office-clock-energy-ha`)
-  3. Headless emulator run uploading all 17 PNGs, `overview_gallery.png`, 4 animated GIFs, 4 H.264 MP4s, and `demo_reel.mp4` as workflow artifacts
+  3. Headless emulator run uploading all 17 PNGs, `overview_gallery.png`, 11 × 30-second H.264 MP4 videos (ISS orbit, Birthday, Halloween, Christmas Advent, Santa Tracker, Xmas Eve Wind-Down Santa, Christmas Day, Easter Egg Hunt, NYE Fireworks, Star Wars Day, and 4-Phase Circadian Cycle), plus a combined `demo_reel.mp4` as workflow artifacts
 - **Release ([`.github/workflows/release.yml`](.github/workflows/release.yml))** — Triggered on `git tag v1.0.0 && git push origin v1.0.0`: compiles the universal multi-device standalone firmware and attaches `*-factory.bin`, `*-ota.bin`, `SHA256SUMS.txt`, `overview_gallery.png`, and `demo_reel.mp4` straight to the GitHub Release.
