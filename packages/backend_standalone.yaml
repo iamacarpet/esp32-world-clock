@@ -949,12 +949,16 @@ interval:
           }
 
           // In universal MAC-suffixed release mode, briefly hold the connected info splash (4s)
-          // so a parent can always power-cycle the clock to read its unique URL, IP & password!
+          // ONLY during daytime/evening — on a midnight power cut during Deep Sleep, skip the hold
+          // and drop straight to dim Red Sleep mode immediately!
           bool mac_mode = esphome::App.is_name_add_mac_suffix_enabled();
           bool info_hold = false;
           if (!id(boot_complete) && wifi_ok && time_ok && mac_mode) {
-            if (s_ready_ms == 0) s_ready_ms = now_ms;
-            info_hold = ((uint32_t)(now_ms - s_ready_ms) < 4000UL);
+            bool is_deep_night = now.is_valid() && (now.hour >= 22 || now.hour < 6);
+            if (!is_deep_night) {
+              if (s_ready_ms == 0) s_ready_ms = now_ms;
+              info_hold = ((uint32_t)(now_ms - s_ready_ms) < 4000UL);
+            }
           }
 
           uint8_t next_st = 4;
