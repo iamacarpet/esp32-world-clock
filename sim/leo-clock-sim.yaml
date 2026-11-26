@@ -584,7 +584,7 @@ script:
       - script.execute: sim_sync_ui
       - delay: !lambda 'return (uint32_t)id(sim_video_secs) * 200U + 3000U;'
 
-      # 19. v1.1 Morning Launchpad Takeover (School Day — Thu 12 Nov 2026 08:08 GMT, Leave at 08:30!)
+      # 19. v1.3 Morning Launchpad Takeover (School Day — Dry Now at 08:08, Rain Forecast Later 75%!)
       - lambda: |-
           id(use_24h_clock) = false;
           id(focus_rem_01) = -1.0f;
@@ -593,7 +593,9 @@ script:
           id(cur_wx_feels) = 7.0f;
           id(cur_wx_high) = 12.0f;
           id(cur_wx_low) = 5.0f;
-          id(cur_wx_cond) = "rainy";
+          id(cur_wx_cond) = "partlycloudy";
+          id(cur_wx_today_cond) = "rainy";
+          id(cur_wx_precip_pct) = 75;
           id(cur_wx_3day) = "FRI,cloudy,11,6|SAT,partlycloudy,13,5|SUN,sunny,14,6";
           id(fam_cal_summary) = world_clock::IcsFeedSummary{};
           id(sch_cal_summary) = world_clock::IcsFeedSummary{};
@@ -618,13 +620,15 @@ script:
       - script.wait: sim_flush
       - snapshot.take: { id: main_display, filename: "19_calendar_morning_launchpad.bmp" }
 
-      # 20. v1.1 Morning Launchpad (No-School Half Term + Auto Back-to-School Countdown — Wed 28 Oct 2026 09:15 GMT)
+      # 20. v1.3 Morning Launchpad (No-School Half Term — Cool Morning 11°C -> Warm Afternoon 23°C!)
       - lambda: |-
-          id(cur_wx_temp) = 15.0f;
-          id(cur_wx_feels) = 14.0f;
-          id(cur_wx_high) = 17.0f;
+          id(cur_wx_temp) = 11.0f;
+          id(cur_wx_feels) = 10.0f;
+          id(cur_wx_high) = 23.0f;
           id(cur_wx_low) = 8.0f;
           id(cur_wx_cond) = "sunny";
+          id(cur_wx_today_cond) = "sunny";
+          id(cur_wx_precip_pct) = 10;
           id(fam_cal_summary) = world_clock::IcsFeedSummary{};
           id(sch_cal_summary) = world_clock::IcsFeedSummary{};
           id(fam_cal_summary).valid = true;
@@ -691,7 +695,11 @@ script:
           id(cal_prominent_active) = false;
           id(cur_wx_temp) = 9.0f;
           id(cur_wx_feels) = 7.0f;
-          id(cur_wx_cond) = "rainy";
+          id(cur_wx_high) = 12.0f;
+          id(cur_wx_low) = 5.0f;
+          id(cur_wx_cond) = "partlycloudy";
+          id(cur_wx_today_cond) = "rainy";
+          id(cur_wx_precip_pct) = 75;
           id(fam_cal_summary) = world_clock::IcsFeedSummary{};
           id(sch_cal_summary) = world_clock::IcsFeedSummary{};
           id(fam_cal_summary).valid = true;
@@ -717,8 +725,12 @@ script:
           id(main_display).take_animation("video_12_calendar_morning.gif", frames, 10.0f);
       - delay: !lambda 'return (uint32_t)id(sim_video_secs) * 250U;'
       - lambda: |-
-          id(cur_wx_temp) = 15.0f;
+          id(cur_wx_temp) = 11.0f;
+          id(cur_wx_high) = 23.0f;
+          id(cur_wx_low) = 8.0f;
           id(cur_wx_cond) = "sunny";
+          id(cur_wx_today_cond) = "sunny";
+          id(cur_wx_precip_pct) = 10;
           id(sch_cal_summary).today_is_school_holiday = true;
           snprintf(id(sch_cal_summary).school_note, sizeof(id(sch_cal_summary).school_note), "Half Term");
           id(sch_cal_summary).back_to_school_days = 5;

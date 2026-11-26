@@ -523,6 +523,16 @@ datetime:
     on_value: { then: [ lambda: 'id(force_redraw) = true;', script.execute: save_prefs_debounced ] }
 
   - platform: template
+    id: cfg_launchpad_start_time
+    name: "Morning Launchpad Start Time"
+    type: time
+    optimistic: true
+    restore_value: true
+    initial_value: "07:00:00"
+    web_server: { sorting_group_id: grp_calendar, sorting_weight: 27 }
+    on_value: { then: [ lambda: 'id(force_redraw) = true;', script.execute: save_prefs_debounced ] }
+
+  - platform: template
     id: cfg_school_leave_time
     name: "Leave for School Time"
     type: time
@@ -543,6 +553,20 @@ datetime:
     on_value: { then: [ script.execute: save_prefs_debounced ] }
 
 number:
+  - platform: template
+    id: cfg_launchpad_hide_delay
+    name: "Keep Launchpad After School Time"
+    mode: slider
+    min_value: 0
+    max_value: 60
+    step: 5
+    unit_of_measurement: "min"
+    optimistic: true
+    restore_value: true
+    initial_value: 30
+    web_server: { sorting_group_id: grp_calendar, sorting_weight: 29 }
+    on_value: { then: [ lambda: 'id(force_redraw) = true;', script.execute: save_prefs_debounced ] }
+
   - platform: template
     id: cfg_nap_minutes
     name: "Nap Timer Duration"
@@ -1020,6 +1044,8 @@ interval:
               id(cur_wx_high) = t.wx_high;
               id(cur_wx_low) = t.wx_low;
               id(cur_wx_cond) = t.cond_buf;
+              id(cur_wx_today_cond) = t.wx_today_cond_buf;
+              id(cur_wx_precip_pct) = t.wx_today_precip_pct;
               id(cur_wx_3day) = t.forecast_3day_buf;
               t.wx_dirty = false;
               wx_changed = true;
@@ -1095,7 +1121,9 @@ interval:
           std::string cs_opt = id(cfg_cal_style).current_option();
           id(cal_display_style) = (cs_opt == "Prominent Dock Card") ? 1 : ((cs_opt == "Morning Launchpad Takeover") ? 2 : 0);
           id(minimal_teen_mode) = (id(cfg_age_profile).current_option() == "Teen & Study Desk (12+)");
+          id(launchpad_start_min) = (int)id(cfg_launchpad_start_time).hour * 60 + (int)id(cfg_launchpad_start_time).minute;
           id(school_leave_min) = (int)id(cfg_school_leave_time).hour * 60 + (int)id(cfg_school_leave_time).minute;
+          id(launchpad_hide_delay_min) = (int)roundf(std::isnan(id(cfg_launchpad_hide_delay).state) ? 30.0f : id(cfg_launchpad_hide_delay).state);
 
           // 3. Rollover-Safe Boot Splash State Machine (Connecting -> AP Ready -> SNTP -> Info Hold -> Live)
           bool wifi_ok = id(wifi_conn).is_connected();
@@ -1407,12 +1435,13 @@ interval:
             if (id(focus_rem_01) >= 0.0f) { id(focus_rem_01) = -1.0f; s_last_focus_stars = -1; dock_stars_dirty = true; }
           }
 
-          // Morning Launchpad Takeover starts at effective wake-up time & skips quiet weekends with no scheduled event
+          // Morning Launchpad Takeover respects Sleep/Quiet Play (slp == 0), starts at Launchpad Start Time,
+          // and stays visible for `launchpad_hide_delay_min` minutes past Leave for School Time (e.g. 08:30 + 30m = 09:00!)
           bool has_today_ev = id(fam_cal_summary).today_timed[0].valid || (id(fam_cal_summary).today_allday[0] != '\0') ||
                               id(sch_cal_summary).today_timed[0].valid || (id(sch_cal_summary).today_allday[0] != '\0') ||
                               !id(parent_note_text).empty();
-          int lp_start_m = id(eff_wakeup_min_today);
-          int lp_end_m = id(school_leave_min) + 5;
+          int lp_start_m = id(launchpad_start_min);
+          int lp_end_m = id(school_leave_min) + std::clamp(id(launchpad_hide_delay_min), 0, 120);
           bool auto_lp = (id(cal_display_style) == 2) && (slp == 0) && (mode <= 1 || mode == 3) &&
                          now.is_valid() && (cur_min >= lp_start_m && cur_min <= lp_end_m) &&
                          (!is_weekend || has_today_ev);

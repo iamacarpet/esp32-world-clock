@@ -52,6 +52,8 @@ struct StandaloneTelemetry {
   float wx_high{NAN};
   float wx_low{NAN};
   char cond_buf[32]{"cloudy"};
+  char wx_today_cond_buf[32]{""};
+  int wx_today_precip_pct{-1};
   char forecast_3day_buf[128]{""};
 
   // ISS payload (protected by mtx; iss_valid is atomic above)
@@ -394,7 +396,7 @@ class NetWorker {
         snprintf(url_buf, kUrlCap,
                  "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
                  "&current=temperature_2m,apparent_temperature,weather_code,is_day"
-                 "&daily=weather_code,temperature_2m_max,temperature_2m_min"
+                 "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max"
                  "&timezone=auto&forecast_days=4",
                  q_lat, q_lon);
 
@@ -414,6 +416,8 @@ class NetWorker {
             float d_max[] = {NAN, NAN, NAN, NAN};
             float d_min[] = {NAN, NAN, NAN, NAN};
             float d_wmo[] = {3, 3, 3, 3};
+            float d_pp[] = {-1, -1, -1, -1};
+            bool have_pp = false;
             fc_local[0] = '\0';
             bool have_daily = false;
 
@@ -421,7 +425,9 @@ class NetWorker {
               const char *p_max = strstr(day_sec, "\"temperature_2m_max\"");
               const char *p_min = strstr(day_sec, "\"temperature_2m_min\"");
               const char *p_wmo = strstr(day_sec, "\"weather_code\"");
+              const char *p_pp = strstr(day_sec, "\"precipitation_probability_max\"");
               const char *p_tm = strstr(day_sec, "\"time\"");
+              if (p_pp != nullptr && parse_csv_floats(p_pp + 31, d_pp, 4)) have_pp = true;
               if (p_max && p_min && p_wmo && p_tm && parse_csv_floats(p_max + 20, d_max, 4) &&
                   parse_csv_floats(p_min + 20, d_min, 4) && parse_csv_floats(p_wmo + 14, d_wmo, 4)) {
                 have_daily = true;
@@ -449,6 +455,9 @@ class NetWorker {
               if (have_daily) {
                 t.wx_high = d_max[0];
                 t.wx_low = d_min[0];
+                snprintf(t.wx_today_cond_buf, sizeof(t.wx_today_cond_buf), "%s",
+                         wmo_to_cond((int)roundf(d_wmo[0]), true));
+                t.wx_today_precip_pct = have_pp ? (int)roundf(std::clamp(d_pp[0], 0.0f, 100.0f)) : -1;
                 if (fc_local[0] != '\0') snprintf(t.forecast_3day_buf, sizeof(t.forecast_3day_buf), "%s", fc_local);
               }
               snprintf(t.cond_buf, sizeof(t.cond_buf), "%s", cond_str);

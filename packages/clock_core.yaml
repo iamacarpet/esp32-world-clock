@@ -42,6 +42,8 @@ globals:
   - { id: cur_wx_high, type: float, restore_value: no, initial_value: 'NAN' }
   - { id: cur_wx_low, type: float, restore_value: no, initial_value: 'NAN' }
   - { id: cur_wx_cond, type: std::string, restore_value: no, initial_value: '"cloudy"' }
+  - { id: cur_wx_today_cond, type: std::string, restore_value: no, initial_value: '""' }
+  - { id: cur_wx_precip_pct, type: int, restore_value: no, initial_value: '-1' }
   - { id: cur_wx_3day, type: std::string, restore_value: no, initial_value: '""' }
   - { id: cur_wx_age_ok, type: bool, restore_value: no, initial_value: 'false' }
   - { id: tracked_yday, type: int, restore_value: no, initial_value: '-1' }
@@ -84,7 +86,9 @@ globals:
   - { id: sch_cal_summary, type: 'world_clock::IcsFeedSummary', restore_value: no }
   - { id: cal_priority_mode, type: int, restore_value: no, initial_value: '0' }
   - { id: cal_display_style, type: int, restore_value: no, initial_value: '0' }
+  - { id: launchpad_start_min, type: int, restore_value: no, initial_value: '420' }
   - { id: school_leave_min, type: int, restore_value: no, initial_value: '510' }
+  - { id: launchpad_hide_delay_min, type: int, restore_value: no, initial_value: '30' }
   - { id: cal_prominent_active, type: bool, restore_value: no, initial_value: 'false' }
   - { id: cal_prominent_title, type: std::string, restore_value: no, initial_value: '""' }
   - { id: cal_prominent_sub, type: std::string, restore_value: no, initial_value: '""' }
@@ -325,15 +329,17 @@ script:
             lv_obj_set_style_border_color(id(lp_school_pill), lv_color_hex(0x14B8A6), 0);
             lv_obj_set_style_text_color(id(lp_school_lbl), lv_color_hex(0x5EEAD4), 0);
             int leave_m = id(school_leave_min);
+            int span_m = std::max(15, leave_m - id(launchpad_start_min));
+            int grace_m = std::max(5, id(launchpad_hide_delay_min));
             int rem_m = leave_m - now_m;
             char cdl[56];
             int pct = 100;
             uint32_t bar_col = 0x14B8A6;
             if (rem_m > 0) {
               snprintf(cdl, sizeof(cdl), "LEAVE FOR SCHOOL IN %d MIN", rem_m);
-              pct = std::clamp((int)((90 - rem_m) * 100 / 90), 5, 98);
+              pct = std::clamp((int)((span_m - rem_m) * 100 / span_m), 5, 98);
               if (rem_m <= 10) bar_col = 0xF59E0B;
-            } else if (rem_m >= -10) {
+            } else if (-rem_m <= grace_m) {
               snprintf(cdl, sizeof(cdl), "TIME TO LEAVE FOR SCHOOL!");
               pct = 100;
               bar_col = 0xEF4444;
@@ -357,34 +363,20 @@ script:
           lv_label_set_text(id(lp_plan_2), p2.c_str());
           lv_label_set_text(id(lp_plan_3), p3.c_str());
 
-          // 3. Right Card: Weather Prep & Auto Holiday / Back-to-School Countdown
+          // 3. Right Card: Whole-Day "PACK & WEAR FOR TODAY" Briefing & Holiday/Countdown Pill
+          // Focuses on full-day trajectory (dry now -> rain later, cool AM -> hot PM swing, all-day cold)
+          // rather than duplicating Band 3's current-moment weather readout!
           float tc = id(cur_wx_temp);
-          float fc = id(cur_wx_feels);
-          bool uf = id(use_fahrenheit);
-          char wxs[48];
-          if (!std::isnan(tc)) {
-            float dt = uf ? world_clock::c_to_f(tc) : tc;
-            float df = std::isnan(fc) ? dt : (uf ? world_clock::c_to_f(fc) : fc);
-            std::string c_raw = id(cur_wx_cond);
-            for (char &ch : c_raw) ch = (char)tolower((unsigned char)ch);
-            const char *c_pretty = "Cloudy";
-            if (c_raw == "sunny") c_pretty = "Sunny";
-            else if (c_raw == "clear-night") c_pretty = "Clear";
-            else if (c_raw == "partlycloudy") c_pretty = "Partly Cloudy";
-            else if (c_raw == "rainy") c_pretty = "Light Rain";
-            else if (c_raw == "pouring") c_pretty = "Heavy Rain";
-            else if (c_raw == "snowy") c_pretty = "Snowy";
-            else if (c_raw == "snowy-rainy") c_pretty = "Sleet";
-            else if (c_raw == "lightning" || c_raw == "lightning-rainy") c_pretty = "Stormy";
-            else if (c_raw == "fog") c_pretty = "Foggy";
-            else if (c_raw == "windy" || c_raw == "windy-variant") c_pretty = "Breezy";
-            snprintf(wxs, sizeof(wxs), "%.0f°%c · Feels %.0f° · %s", dt, uf ? 'F' : 'C', df, c_pretty);
-          } else {
-            snprintf(wxs, sizeof(wxs), "Weather Syncing...");
+          float hi = id(cur_wx_high);
+          float lo = id(cur_wx_low);
+          if (std::isnan(hi) && id(tracked_yday) >= 0 && id(tracked_high) > -900.0f) {
+            hi = id(tracked_high);
+            lo = id(tracked_low);
           }
-          lv_label_set_text(id(lp_wx_summary), wxs);
-          std::string prep = world_clock::weather_prep_hint(id(cur_wx_cond), tc, uf);
-          lv_label_set_text(id(lp_wx_prep), prep.c_str());
+          auto prep = world_clock::build_day_prep_briefing(
+              id(cur_wx_cond), id(cur_wx_today_cond), tc, hi, lo, id(cur_wx_precip_pct), id(use_fahrenheit));
+          lv_label_set_text(id(lp_wx_summary), prep.headline.c_str());
+          lv_label_set_text(id(lp_wx_prep), prep.pack_hint.c_str());
 
           std::string h_txt = cv.holiday_badge;
           if (h_txt.empty() && !id(cal_next_event).empty() && id(cal_next_days) > 0) {

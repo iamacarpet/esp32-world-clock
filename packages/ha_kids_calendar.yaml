@@ -193,6 +193,14 @@ switch:
 
 datetime:
   - platform: template
+    id: ha_launchpad_start_time
+    name: "Morning Launchpad Start Time"
+    type: time
+    optimistic: true
+    restore_value: true
+    initial_value: "07:00:00"
+    on_value: { then: [ lambda: 'id(force_redraw) = true;' ] }
+  - platform: template
     id: ha_school_leave_time
     name: "Leave for School Time"
     type: time
@@ -209,6 +217,17 @@ datetime:
     initial_value: "2027-08-01"
 
 number:
+  - platform: template
+    id: ha_launchpad_hide_delay
+    name: "Keep Launchpad After School Time"
+    min_value: 0
+    max_value: 60
+    step: 5
+    unit_of_measurement: "min"
+    optimistic: true
+    restore_value: true
+    initial_value: 30
+    on_value: { then: [ lambda: 'id(force_redraw) = true;' ] }
   - platform: template
     id: ha_nap_minutes
     name: "Nap Timer Duration"
@@ -367,7 +386,9 @@ interval:
           std::string cs_opt = id(ha_cal_style).current_option();
           id(cal_display_style) = (cs_opt == "Prominent Dock Card") ? 1 : ((cs_opt == "Morning Launchpad Takeover") ? 2 : 0);
           id(minimal_teen_mode) = (id(ha_age_profile).current_option() == "Teen & Study Desk (12+)");
+          id(launchpad_start_min) = (int)id(ha_launchpad_start_time).hour * 60 + (int)id(ha_launchpad_start_time).minute;
           id(school_leave_min) = (int)id(ha_school_leave_time).hour * 60 + (int)id(ha_school_leave_time).minute;
+          id(launchpad_hide_delay_min) = (int)roundf(std::isnan(id(ha_launchpad_hide_delay).state) ? 30.0f : id(ha_launchpad_hide_delay).state);
 
           id(active_cd_name) = id(ha_countdown_name).state;
           if (now.is_valid() && !id(active_cd_name).empty() && id(ha_countdown_date).year > 2020) {

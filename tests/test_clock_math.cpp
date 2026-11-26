@@ -517,6 +517,29 @@ int main() {
     assert(!w4_mon.summary().today_timed[1].valid);
   }
 
+  // 13. v1.3.0 Whole-Day "PACK & WEAR FOR TODAY" Briefing (Zero Redundancy with Current Weather Dock!)
+  {
+    // Dry morning right now (partlycloudy 9C) BUT 75% rain forecast later -> warns to pack raincoat!
+    auto b1 = build_day_prep_briefing("partlycloudy", "rainy", 9.0f, 12.0f, 5.0f, 75, false);
+    assert(b1.headline == "Dry Now · Rain Later (75%)!");
+    assert(b1.pack_hint == "Pack Warm Raincoat & Umbrella");
+
+    // Chilly summer morning (11C) climbing to hot afternoon (25C) -> layers + sun hat & water!
+    auto b2 = build_day_prep_briefing("sunny", "sunny", 11.0f, 25.0f, 9.0f, 10, false);
+    assert(b2.headline.find("Cool AM") != std::string::npos && b2.headline.find("Hot PM") != std::string::npos);
+    assert(b2.pack_hint == "Layers + Sun Hat & Water");
+
+    // Cool morning (10C) climbing to warm afternoon (21C) -> Jumper now, T-Shirt later!
+    auto b3 = build_day_prep_briefing("sunny", "partlycloudy", 10.0f, 21.0f, 8.0f, 15, false);
+    assert(b3.headline.find("Warm PM") != std::string::npos);
+    assert(b3.pack_hint == "Layers: Jumper Now, T-Shirt Later");
+
+    // Freezing all day (High 5C) in Fahrenheit -> 41°F
+    auto b4 = build_day_prep_briefing("cloudy", "cloudy", 2.0f, 5.0f, 0.0f, 10, true);
+    assert(b4.headline == "Cold All Day (High 41°F)");
+    assert(b4.pack_hint == "Big Coat, Hat & Gloves");
+  }
+
   printf("ALL CLOCK_MATH & ICS_PARSER UNIT TESTS PASSED!\n");
   return 0;
 }

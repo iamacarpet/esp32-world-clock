@@ -31,10 +31,10 @@ Pick how prominent you want your calendar to look under **Calendar Display Style
 1. **Subtle Ticker Only** *(Default)* — Keeps the full live World Map & 3-day forecast visible, rotating calm calendar headlines along the top ticker (`"SCHOOL DAY · SWIMMING LESSON (4 PM)"`).
 2. **Prominent Dock Card** — Keeps the full World Map & ISS visible, while turning the bottom-right dock card into a clean **"TODAY'S PLAN"** card with a live countdown for timed events (`"SWIMMING LESSON IN 25 MIN!"`):
    ![Prominent Calendar Dock Card](media/21_calendar_prominent_dock.png)
-3. **Morning Launchpad Takeover** *(Autism-Friendly School Morning Mode)* — From **your child's effective Morning Wake-Up Time** until **5 minutes past your Leave for School Time** (automatically skipped on quiet weekends with no scheduled events!), Band 2 gently switches to a calm, structured morning briefing board (then automatically returns to the live World Map!):
+3. **Morning Launchpad Takeover** *(Autism-Friendly School Morning Mode)* — Starts at your **Morning Launchpad Start Time** (default `07:00`, and automatically waits until Wake-Up if Sleep/Quiet Play is still active!) and stays on for your **Keep Launchpad After School Time** grace window (default `30 min` past `Leave for School Time`, e.g. `08:30 → 09:00` for busy mornings!), automatically skipped on quiet weekends with no scheduled events:
    - Top **School Day** (teal) or **No School · Half Term** (warm amber) badge + live **"LEAVE FOR SCHOOL IN 22 MIN"** progress bar
    - **Today's Plan & Routine** (Parent Note, timed events, all-day items like PE Kit, and Tomorrow heads-up)
-   - **Weather Prep Checklist** (e.g. *"Warm Raincoat & Umbrella"*, *"Big Coat, Gloves & Scarf"*, *"Sun Hat, Suncream & Water"*)
+   - **Pack & Wear for Today (Whole-Day Briefing)** — Looks ahead at the **full day's forecast** rather than repeating the current weather below it: warns *"Dry Now · Rain Later (75%)! → Pack Warm Raincoat & Umbrella"* when rain is due by pickup, or *"Cool AM → Warm PM (↑23°C) → Layers: Jumper Now, T-Shirt Later"* on big morning-to-afternoon temperature swings!
    - **Automatic Holiday & Back-to-School Badge**: counts down **"8 SLEEPS TO HALF TERM!"** during term time and **"5 SLEEPS TO BACK TO SCHOOL"** during school holidays (automatically skipping Sat/Sun weekends!)
 
 | School Day Morning Launchpad | Half Term No-School Launchpad |

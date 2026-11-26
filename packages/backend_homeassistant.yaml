@@ -396,12 +396,13 @@ interval:
             if (id(focus_rem_01) >= 0.0f) { id(focus_rem_01) = -1.0f; s_last_focus_stars = -1; dock_stars_dirty = true; }
           }
 
-          // Morning Launchpad starts at effective wake-up time and skips quiet weekends with no scheduled event!
+          // Morning Launchpad respects Sleep/Quiet Play (slp == 0), starts at Launchpad Start Time,
+          // and stays visible for `launchpad_hide_delay_min` minutes past Leave for School Time (e.g. 08:30 + 30m = 09:00!)
           bool has_today_ev = id(fam_cal_summary).today_timed[0].valid || (id(fam_cal_summary).today_allday[0] != '\0') ||
                               id(sch_cal_summary).today_timed[0].valid || (id(sch_cal_summary).today_allday[0] != '\0') ||
                               !id(parent_note_text).empty();
-          int lp_start_m = id(eff_wakeup_min_today);
-          int lp_end_m = id(school_leave_min) + 5;
+          int lp_start_m = id(launchpad_start_min);
+          int lp_end_m = id(school_leave_min) + std::clamp(id(launchpad_hide_delay_min), 0, 120);
           bool auto_lp = (id(cal_display_style) == 2) && (slp == 0) && (mode <= 1 || mode == 3) &&
                          now.is_valid() && (cur_min >= lp_start_m && cur_min <= lp_end_m) &&
                          (!is_weekend || has_today_ev);

@@ -33,7 +33,7 @@ Each phase can be enabled/disabled and customized independently (times, brightne
 | ![Tooth Fairy Mode](docs/media/18_tooth_fairy_winddown.png) | ![Boot Screen with Sleep-Safe Red QR Code and Unique Login](docs/media/01_boot_splash.png) |
 
 ### Family & School Calendars, Morning Launchpad & Multi-Age Study Desk
-Choose between **Subtle Ticker Only**, **Prominent Dock Card**, or **Morning Launchpad Takeover** (calm autism-friendly daily briefing with live Leave-for-School countdown, weather prep checklist, and automatic *"X SLEEPS TO HALF TERM!"* / *"X SLEEPS TO BACK TO SCHOOL"* badges), plus **Symmetric School-Night Bedtimes** (Friday/Saturday/pre-holiday late bedtime; Sunday night automatically reverts to early school-night bedtime!) and **Age & Visual Profiles (Ages 3–16+)** with a built-in **25m / 5m Focus Pomodoro Timer**:
+Choose between **Subtle Ticker Only**, **Prominent Dock Card**, or **Morning Launchpad Takeover** (calm autism-friendly daily briefing with live Leave-for-School countdown, whole-day **Pack & Wear for Today** briefing — e.g. *"Dry Now · Rain Later (75%)!"* or *"Cool AM → Warm PM (↑23°C)"* — and automatic *"X SLEEPS TO HALF TERM!"* / *"X SLEEPS TO BACK TO SCHOOL"* badges), plus **Symmetric School-Night Bedtimes** (Friday/Saturday/pre-holiday late bedtime; Sunday night automatically reverts to early school-night bedtime!) and **Age & Visual Profiles (Ages 3–16+)** with a built-in **25m / 5m Focus Pomodoro Timer**:
 
 | Calendar & Multi-Age Walkthrough (Animated) | Morning Launchpad — School Day & Leave Countdown |
 | :---: | :---: |

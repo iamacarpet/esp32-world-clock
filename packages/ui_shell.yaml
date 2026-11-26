@@ -368,7 +368,7 @@ lvgl:
                         id: lp_right_kicker
                         x: 18
                         y: 14
-                        text: "WEATHER PREP & COUNTDOWN"
+                        text: "PACK & WEAR FOR TODAY"
                         text_font: font_fira_xs
                         text_color: 0x38BDF8
                     - label:
@@ -376,7 +376,7 @@ lvgl:
                         x: 18
                         y: 48
                         width: 332
-                        text: "8°C · Rainy · Feels 6°"
+                        text: "Dry Now · Rain Later (75%)!"
                         text_font: font_card_title
                         text_color: 0xFFF6EA
                     - label:
@@ -384,7 +384,7 @@ lvgl:
                         x: 18
                         y: 92
                         width: 332
-                        text: "Warm Raincoat & Umbrella"
+                        text: "Pack Warm Raincoat & Umbrella"
                         text_font: font_card_sub
                         text_color: 0x93C5FD
                     - obj:

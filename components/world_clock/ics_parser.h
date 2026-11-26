@@ -203,6 +203,106 @@ inline std::string weather_prep_hint(const std::string &cond, float temp_c, bool
   return "Layers · Check Outside";
 }
 
+// Whole-day school-run briefing for the Morning Launchpad ("PACK & WEAR FOR TODAY" card).
+// Focuses on what changes across the whole day (rain later when dry now, morning->afternoon swings,
+// all-day cold/heat) rather than duplicating Band 3's current-moment temperature readout.
+struct DayPrepBriefing {
+  std::string headline;
+  std::string pack_hint;
+};
+
+inline DayPrepBriefing build_day_prep_briefing(const std::string &cur_cond, const std::string &today_cond,
+                                               float cur_c, float high_c, float low_c, int precip_pct, bool use_f) {
+  auto lower = [](std::string s) {
+    for (char &ch : s) ch = (char)tolower((unsigned char)ch);
+    return s;
+  };
+  auto is_wet = [](const std::string &s) {
+    return s.find("rain") != std::string::npos || s.find("pour") != std::string::npos ||
+           s.find("lightning") != std::string::npos || s.find("storm") != std::string::npos;
+  };
+  auto is_snow = [](const std::string &s) {
+    return s.find("snow") != std::string::npos || s.find("sleet") != std::string::npos ||
+           s.find("hail") != std::string::npos;
+  };
+
+  if (std::isnan(cur_c) && std::isnan(high_c)) {
+    return {"Day Forecast Syncing...", "Check outside before leaving"};
+  }
+
+  std::string cc = lower(cur_cond);
+  std::string dc = lower(today_cond);
+  bool cur_w = is_wet(cc);
+  bool cur_s = is_snow(cc);
+  bool day_s = is_snow(dc);
+  bool day_w = is_wet(dc) || (precip_pct >= 50);
+
+  float hi_c = !std::isnan(high_c) ? high_c : cur_c;
+  float lo_c = !std::isnan(low_c) ? low_c : cur_c;
+  float disp_hi = use_f ? c_to_f(hi_c) : hi_c;
+  if (fabsf(disp_hi) < 0.5f) disp_hi = 0.0f;
+  char unit = use_f ? 'F' : 'C';
+  bool big_swing = !std::isnan(cur_c) && !std::isnan(high_c) && ((high_c - cur_c) >= 7.0f);
+
+  char hdr[48];
+  if (cur_s || day_s) {
+    if (!cur_s && day_s) {
+      snprintf(hdr, sizeof(hdr), "Dry Now · Snow Later (%.0f°%c)", disp_hi, unit);
+    } else {
+      snprintf(hdr, sizeof(hdr), "Snow & Ice Today (High %.0f°%c)", disp_hi, unit);
+    }
+    return {hdr, "Warm Coat, Hat, Gloves & Boots"};
+  }
+
+  if (!cur_w && day_w) {
+    if (precip_pct >= 50) {
+      snprintf(hdr, sizeof(hdr), "Dry Now · Rain Later (%d%%)!", std::min(precip_pct, 100));
+    } else {
+      snprintf(hdr, sizeof(hdr), "Dry Now · Rain Expected Later!");
+    }
+    if (hi_c < 13.0f) return {hdr, "Pack Warm Raincoat & Umbrella"};
+    if (big_swing && hi_c >= 19.0f) return {hdr, "Layers + Light Raincoat!"};
+    return {hdr, "Pack Raincoat for Home Time!"};
+  }
+
+  if (cur_w) {
+    if (precip_pct >= 50) {
+      snprintf(hdr, sizeof(hdr), "Wet Today (High %.0f°%c · %d%%)", disp_hi, unit, std::min(precip_pct, 100));
+    } else {
+      snprintf(hdr, sizeof(hdr), "Wet & Showery (High %.0f°%c)", disp_hi, unit);
+    }
+    return {hdr, (hi_c < 13.0f) ? "Warm Raincoat & Umbrella" : "Light Raincoat & Umbrella"};
+  }
+
+  if (big_swing && hi_c >= 18.0f) {
+    if (hi_c >= 24.0f) {
+      snprintf(hdr, sizeof(hdr), "Cool AM \u2192 Hot PM (\u2191%.0f°%c)", disp_hi, unit);
+      return {hdr, "Layers + Sun Hat & Water"};
+    }
+    snprintf(hdr, sizeof(hdr), "Cool AM \u2192 Warm PM (\u2191%.0f°%c)", disp_hi, unit);
+    return {hdr, "Layers: Jumper Now, T-Shirt Later"};
+  }
+
+  if (hi_c >= 22.0f) {
+    snprintf(hdr, sizeof(hdr), "Warm & Bright Later (\u2191%.0f°%c)", disp_hi, unit);
+    return {hdr, "Sun Hat, Suncream & Water"};
+  }
+  if (hi_c < 8.5f || (lo_c < 2.0f && hi_c < 11.0f)) {
+    snprintf(hdr, sizeof(hdr), "Cold All Day (High %.0f°%c)", disp_hi, unit);
+    return {hdr, "Big Coat, Hat & Gloves"};
+  }
+  if (hi_c < 15.0f) {
+    snprintf(hdr, sizeof(hdr), "Cool Day Ahead (High %.0f°%c)", disp_hi, unit);
+    return {hdr, "Jumper or Light Jacket"};
+  }
+  if (hi_c >= 19.0f) {
+    snprintf(hdr, sizeof(hdr), "Warm Afternoon (High %.0f°%c)", disp_hi, unit);
+    return {hdr, "T-Shirt Weather + Water"};
+  }
+  snprintf(hdr, sizeof(hdr), "Mild Day Ahead (High %.0f°%c)", disp_hi, unit);
+  return {hdr, "Light Layers · No Rain Due"};
+}
+
 // Evaluates Family + School calendars + Custom Countdown into unified display strings
 // across all 3 priority modes (0=Smart Auto, 1=Today & Routine First, 2=Countdowns First).
 inline CalendarView build_calendar_view(const IcsFeedSummary &fam, const IcsFeedSummary &sch,
