@@ -46,7 +46,7 @@ jobs:
       - name: Install system tools (Ninja, ImageMagick & FFmpeg)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build imagemagick ffmpeg
+          sudo apt-get install -y --no-install-recommends ninja-build imagemagick fonts-dejavu-core ffmpeg
 
       - name: Cache PlatformIO & ESP-IDF toolchains
         uses: actions/cache@v4
