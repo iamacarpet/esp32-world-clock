@@ -1,0 +1,37 @@
+# Headless Host Hardware Platform (ESPHome 2026.10.2 native SnapshotDisplay — zero SDL2/X11 needed!)
+esphome:
+  name: ${dev_name}
+  friendly_name: ${display_name}
+
+host:
+
+world_clock: {}
+
+logger:
+  level: INFO
+
+time:
+  - platform: world_clock
+    id: clock_time
+    timezone: "${timezone}"
+
+display:
+  - platform: snapshot
+    id: main_display
+    dimensions: 800x480
+
+# Virtual backlight (mirrors real PWM backlight API so all 4-phase dimming scripts run identically)
+output:
+  - platform: template
+    id: sim_backlight_out
+    type: float
+    write_action:
+      - lambda: |-
+          (void)state;
+
+light:
+  - platform: monochromatic
+    id: display_backlight
+    name: "Simulated Backlight"
+    output: sim_backlight_out
+    restore_mode: ALWAYS_ON

@@ -34,20 +34,40 @@ Available in **three plug-and-play flavours** from one modular codebase:
 │   ├── world_map.h               # Continent grid, terminator, night lights, aurora, PSRAM flush
 │   ├── weather_dock.h            # Anti-aliased weather icons (incl. fog), lunar moon, holiday cards
 │   ├── sprite_engine.h           # 10fps dirty-rect sprite engine (ISS + forward arc, Santa, etc.)
-│   └── net_worker.h              # Core 0 FreeRTOS HTTPS worker (Open-Meteo + ISS failover)
+│   ├── net_worker.h              # Core 0 FreeRTOS HTTPS worker (Open-Meteo + ISS failover)
+│   └── sim_time.h / time.py      # Deterministic controllable clock for headless host emulation
 ├── packages/
-│   ├── hardware_jc8048w550n.yaml # Board pins, PSRAM, 16-bit RGB LCD, 19.5kHz PWM backlight
+│   ├── hardware_jc8048w550n.yaml # Board pins, PSRAM, 16-bit RGB LCD, 19.5kHz PWM backlight, OTA
 │   ├── fonts.yaml                # Fira Code v6.2.0 + Material Design Icons
 │   ├── ui_shell.yaml             # Band 1 (Header), Band 2 (Map), Top-Layer Boot/OTA Splash
 │   ├── dock_weather.yaml         # Pluggable Band 3: Weather + 3-Day Forecast + Sleep/Holiday Cards
 │   ├── dock_energy_ha.yaml       # Pluggable Band 3: 4-Tile Home Energy & Tariff Strip (HA)
 │   ├── ha_weather_sensors.yaml   # HA weather entity bindings (pair with dock_weather.yaml)
-│   ├── clock_core.yaml           # Shared globals, OTA hooks, preview auto-revert, 10fps loop
+│   ├── clock_core.yaml           # Shared globals, OTA splash, preview auto-revert, 10fps loop
 │   ├── backend_homeassistant.yaml# HA API, time, ISS & 1Hz schedule/header engine
 │   └── backend_standalone.yaml   # Core 0 NetWorker, Google NTP, Captive Portal & Web UI v3
-├── examples/                     # Public, personal-info-free starter configs
+├── examples/                     # Public, personal-info-free starter & universal release configs
+├── sim/                          # Headless ESPHome host + SnapshotDisplay emulators (zero X11/SDL!)
+├── scripts/run_emulator.py       # Compiles/runs emulators, builds PNG gallery & GIF/MP4 reels
+├── .github/workflows/            # CI (tests + firmware builds + emulator media) & Release builds
 └── tests/test_clock_math.cpp     # Fast g++ unit tests for core C++ math
 ```
+
+---
+
+## Pre-Built Standalone Firmware (Zero ESPHome Install Required!)
+
+Every tagged GitHub Release (`v*`) automatically builds and attaches universal pre-built firmware binaries from [`examples/world-clock-standalone-release.yaml`](examples/world-clock-standalone-release.yaml):
+
+- **`world-clock-standalone-vX.Y.Z-factory.bin`** — First-time USB flash at offset `0x0` ([ESP Web Tools](https://web.esphome.io/) or `esptool.py`).
+- **`world-clock-standalone-vX.Y.Z-ota.bin`** — One-click wireless update via the clock's Web UI (**OTA Update**). Preserves Wi-Fi, child's name, birth date, coordinates, sleep schedule, brightness, and custom wording automatically!
+
+### Multi-Device Ready (Hardware MAC Auto-Identity)
+Multiple clocks in the same household can run the exact same `.bin` without colliding:
+- **Unique mDNS Hostname**: `http://world-clock-<mac6>.local/`
+- **Unique Setup Wi-Fi Hotspot**: `world-clock-<mac6>` (password: `ClockSetup123`)
+- **Unique Web Settings Login**: username `parent`, password `clock-<mac6>` (derived from the board's last 6 hardware MAC hex characters)
+- **Zero Setup Card Needed**: Unplug & plug in any clock to see its exact URL, IP address, and `parent / clock-<mac6>` login displayed on the 5-inch boot screen.
 
 ---
 
@@ -62,7 +82,7 @@ external_components:
   - source:
       type: git
       url: https://github.com/YOUR_USER/esp32-world-clock
-      ref: main
+      ref: master
       path: components
     components: [world_clock]
     refresh: 1d
@@ -70,7 +90,7 @@ external_components:
 packages:
   world_clock:
     url: https://github.com/YOUR_USER/esp32-world-clock
-    ref: main
+    ref: master
     refresh: 1d
     files:
       - packages/hardware_jc8048w550n.yaml
@@ -89,7 +109,7 @@ packages:
 ## Creating Your Own Custom Band 3 Dock
 
 Any Band 3 dock (y = 400..480) only needs to:
-1. Add its LVGL widgets under `lvgl: pages: - id: main_page: widgets:`
+1. Add its LVGL widgets under `lvgl: pages: - id: !extend main_page: widgets:`
 2. Implement 3 scripts:
    - `render_dock` (full redraw on palette/mode change & every 5 min)
    - `apply_dock_palette` (update widget colors for `ui_palette` `0`=Day, `1`=Red, `2`=Amber)
@@ -99,13 +119,21 @@ See [packages/dock_energy_ha.yaml](packages/dock_energy_ha.yaml) for a complete,
 
 ---
 
-## Local Validation & Unit Tests
+## Headless Emulator, Screenshots, Videos & CI
+
+This repo includes a native **ESPHome `host:` + `SnapshotDisplay` headless emulator** (`sim/`) that runs the real LVGL 9.5 UI, fonts, world map, weather dock, energy dock, and 10fps sprite engine directly on Linux with zero display server or SDL2 required:
 
 ```bash
 # Run C++ unit tests (4-phase schedule, Easter boundaries, lunar phase, UTF-8, JSON)
-g++ -std=c++17 -Wall -Wextra -Werror tests/test_clock_math.cpp -o /tmp/test_clock_math && /tmp/test_clock_math
+g++ -std=c++17 -Wall -Wextra -Werror -Icomponents/world_clock tests/test_clock_math.cpp -o /tmp/test_clock_math && /tmp/test_clock_math
 
-# Validate any config with ESPHome
-cp secrets.yaml.example secrets.yaml
-esphome config examples/leo-clock-standalone.yaml
+# Run the headless emulator locally to capture all 17 mode PNGs, contact sheet & animated GIFs/MP4s
+python3 scripts/run_emulator.py --out sim_output
 ```
+
+### GitHub Actions Workflows
+- **CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml))** — Runs on every push to `master`/`main` and every PR:
+  1. C++ unit tests (`-Wall -Wextra -Werror`)
+  2. Real ESP32-S3 firmware compilation across all 4 example/release configs (`leo-clock-standalone`, `world-clock-standalone-release`, `leo-clock-ha`, `office-clock-energy-ha`)
+  3. Headless emulator run uploading all 17 PNGs, `overview_gallery.png`, 4 animated GIFs, 4 H.264 MP4s, and `demo_reel.mp4` as workflow artifacts
+- **Release ([`.github/workflows/release.yml`](.github/workflows/release.yml))** — Triggered on `git tag v1.0.0 && git push origin v1.0.0`: compiles the universal multi-device standalone firmware and attaches `*-factory.bin`, `*-ota.bin`, `SHA256SUMS.txt`, `overview_gallery.png`, and `demo_reel.mp4` straight to the GitHub Release.

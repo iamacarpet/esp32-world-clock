@@ -1,0 +1,502 @@
+# Headless Emulator: Generic Kids Standalone Clock ("Leo") — Captures All Operational Modes!
+# Runs the REAL LVGL 9.5 UI, fonts, World Map, Weather Dock, and 10fps Sprite Engine on Linux host.
+
+substitutions:
+  dev_name: leo-clock-sim
+  display_name: "Leo World Clock (Sim)"
+  splash_kicker_text: "LEO'S WORLD & SPACE CLOCK"
+  default_child_name: "LEO"
+  default_birth_year: "2019"
+  default_birth_month: "6"
+  default_birth_day: "15"
+  default_location: "LONDON UK"
+  default_lat: "51.5074"
+  default_lon: "-0.1278"
+  timezone: "Europe/London"
+  default_use_24h: "false"
+  default_use_fahrenheit: "false"
+  default_use_miles: "false"
+  default_night_lights: "true"
+  default_santa_in_winddown: "true"
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [world_clock]
+
+packages:
+  hardware: !include hardware_host_snapshot.yaml
+  fonts: !include ../packages/fonts.yaml
+  ui_shell: !include ../packages/ui_shell.yaml
+  dock: !include ../packages/dock_weather.yaml
+  core: !include ../packages/clock_core.yaml
+
+script:
+  - id: sim_sync_ui
+    mode: single
+    then:
+      - lambda: |-
+          auto now = id(clock_time).now();
+          if (!now.is_valid()) return;
+
+          const bool use24 = id(use_24h_clock);
+          const bool use_mi = id(use_miles);
+          std::string cname = world_clock::to_upper_ascii(id(active_child_name));
+          std::string loc = id(active_loc_name);
+
+          world_clock::ScheduleConfig scfg;
+          scfg.winddown_enabled = true;
+          scfg.sleep_enabled = true;
+          scfg.quiet_enabled = true;
+          scfg.winddown_m = 19 * 60;
+          scfg.bedtime_m  = 19 * 60 + 30;
+          scfg.quiet_m    = 5 * 60;
+          scfg.wakeup_m   = 6 * 60 + 30;
+          scfg.special_delay_m = 0;
+
+          world_clock::TokenContext tctx{
+              cname,
+              world_clock::format_short_time(19, 0, use24),
+              world_clock::format_short_time(19, 30, use24),
+              world_clock::format_short_time(5, 0, use24),
+              world_clock::format_short_time(6, 30, use24),
+          };
+          id(msg_winddown_title_resolved) = world_clock::expand_tokens("TIME TO GET READY FOR BED", tctx);
+          id(msg_winddown_sub_resolved)   = world_clock::expand_tokens("PJs, teeth & story · Bed {bedtime}", tctx);
+          id(msg_sleep_title_resolved)    = world_clock::expand_tokens("BEFORE {quiet} · SLEEP TIME", tctx);
+          id(msg_sleep_sub_resolved)      = world_clock::expand_tokens("Can't sleep? Wake Mum & Dad", tctx);
+          id(msg_quiet_title_resolved)    = world_clock::expand_tokens("PAST {quiet} · OK TO GET UP", tctx);
+          id(msg_quiet_sub_resolved)      = world_clock::expand_tokens("Quiet play in your room OK!", tctx);
+          id(msg_xmas_title_resolved)     = world_clock::expand_tokens("MERRY CHRISTMAS!", tctx);
+          id(msg_xmas_sub_resolved)       = world_clock::expand_tokens("Time for presents, {name}!", tctx);
+
+          int m = now.month, d = now.day_of_month, yr = now.year;
+          bool is_special_night = (m == 12 && (d == 24 || d == 31)) || (m == 11 && d == 5);
+          uint8_t slp = world_clock::evaluate_schedule(now.hour * 60 + now.minute, scfg, is_special_night);
+
+          uint8_t mode = 1;
+          if (m == 6 && d == 15) mode = 2;
+          else if (m == 12 && d == 25) mode = 9;
+          else if (m == 12 && d == 24) mode = 4;
+          else if (m == 12 && d < 24) mode = 3;
+          else if (m == 10 && d == 31) mode = 5;
+          else if ((m == 11 && d == 5) || (m == 12 && d == 31) || (m == 1 && d == 1)) mode = 7;
+          else if (m == 5 && d == 4) mode = 8;
+          else if (world_clock::is_easter_window(yr, m, d)) mode = 6;
+          else mode = 1;
+
+          uint8_t pal = (slp == 1) ? 1 : ((slp == 2 || slp == 3) ? 2 : 0);
+          bool mode_changed = (slp != id(sleep_phase)) || (mode != id(active_occasion));
+          if (mode_changed) {
+            id(badge_mode_applied) = 255;
+            if (mode != 4) id(santa_wp_idx) = -1;
+          }
+          id(sleep_phase) = slp;
+          id(ui_palette) = pal;
+          id(active_occasion) = mode;
+          if (mode_changed || id(force_redraw)) {
+            id(force_redraw) = false;
+            id(applied_palette) = 255;
+          }
+
+          // Status icons (healthy Wi-Fi + Synced Cloud)
+          lv_label_set_text(id(wifi_icon_label), "\U000F0928");
+          lv_obj_set_style_text_color(id(wifi_icon_label), lv_color_hex((pal == 0) ? 0x787882 : 0x7A1812), 0);
+          lv_label_set_text(id(sync_icon_label), "\U000F0160");
+          lv_obj_set_style_text_color(id(sync_icon_label), lv_color_hex((pal == 0) ? 0x787882 : 0x7A1812), 0);
+
+          // Clock + Date + Location Pill
+          char cbuf[24];
+          if (use24) {
+            snprintf(cbuf, sizeof(cbuf), "%02d\u2236%02d\u2236%02d", now.hour, now.minute, now.second);
+            lv_obj_add_flag(id(ampm_label), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_x(id(clock_label), -42);
+          } else {
+            int hr12 = now.hour % 12;
+            if (hr12 == 0) hr12 = 12;
+            snprintf(cbuf, sizeof(cbuf), "%d\u2236%02d\u2236%02d", hr12, now.minute, now.second);
+            lv_obj_remove_flag(id(ampm_label), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_x(id(clock_label), -84);
+            lv_label_set_text(id(ampm_label), (now.hour >= 12) ? "PM" : "AM");
+          }
+          lv_label_set_text(id(clock_label), cbuf);
+
+          char dbuf[48];
+          now.strftime(dbuf, sizeof(dbuf), "%A, %d %b %Y");
+          lv_label_set_text(id(date_label), dbuf);
+          lv_label_set_text(id(loc_label), loc.c_str());
+          lv_obj_set_size(id(loc_pill), LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+          lv_obj_update_layout(lv_obj_get_parent(id(date_label)));
+          lv_obj_align_to(id(loc_pill), id(date_label), LV_ALIGN_OUT_RIGHT_MID, 10, 0);
+
+          // Ticker message
+          std::string tick = "CLASSIC WORLD DAY/NIGHT MAP";
+          if (slp == 1) {
+            tick = world_clock::expand_tokens("SLEEP TIME · BEFORE {quiet} \u2192 STAY IN BED", tctx);
+          } else if (slp == 2) {
+            tick = world_clock::expand_tokens("PAST {quiet} · QUIET PLAY IN YOUR ROOM OK", tctx);
+          } else if (slp == 3) {
+            if (mode == 4 && id(keep_santa_winddown) && id(santa_wp_idx) >= 0) {
+              char sw[64];
+              snprintf(sw, sizeof(sw), "SANTA \u2192 %s · GET READY FOR BED!", id(santa_city).c_str());
+              tick = sw;
+            } else {
+              tick = world_clock::expand_tokens("BEDTIME AT {bedtime} \u2192 GET READY FOR BED!", tctx);
+            }
+          } else if (mode == 1) {
+            tick = "SPACE STATION (ISS) \u2192 OVER UK & EUROPE";
+          } else if (mode == 2) {
+            int age = std::max(1, now.year - id(active_birth_year));
+            char bb[64];
+            snprintf(bb, sizeof(bb), "IT'S YOUR %dTH BIRTHDAY, %s!", age, cname.c_str());
+            tick = bb;
+          } else if (mode == 3) {
+            int day_dec = std::clamp((int)now.day_of_month, 1, 24);
+            int sleeps = 25 - day_dec;
+            int filled = (day_dec * 8) / 24;
+            std::string bar = "\uEE03";
+            for (int k = 1; k <= 8; k++) bar += (k <= filled) ? "\uEE04" : "\uEE01";
+            bar += (filled >= 8) ? "\uEE05" : "\uEE02";
+            char xb[64];
+            snprintf(xb, sizeof(xb), " %d SLEEPS TO XMAS!", sleeps);
+            tick = std::string("ADVENT ") + bar + xb;
+          } else if (mode == 9) {
+            tick = std::string("MERRY CHRISTMAS MORNING, ") + cname + "!";
+          } else if (mode == 4) {
+            int d_val = use_mi ? world_clock::km_to_mi(id(santa_dist_km)) : id(santa_dist_km);
+            char st_b[64];
+            snprintf(st_b, sizeof(st_b), "SANTA \u2192 %s · %d %s AWAY!", id(santa_city).c_str(), d_val, use_mi ? "MI" : "KM");
+            tick = st_b;
+          } else if (mode == 5) {
+            tick = "SPOOKY HALLOWEEN MODE  ·  HAPPY HALLOWEEN!";
+          } else if (mode == 6) {
+            tick = std::string("HAPPY EASTER, ") + cname + "  ·  SPOT THE 5 EGGS!";
+          } else if (mode == 7) {
+            tick = std::string("HAPPY NEW YEAR, ") + cname + "!";
+          } else if (mode == 8) {
+            tick = "STAR WARS DAY  \u2192  TWIN SUNS & TIE PATROL";
+          }
+          world_clock::utf8_truncate_codepoints(tick, 44);
+          lv_label_set_text(id(ticker_label), tick.c_str());
+      - if:
+          condition:
+            lambda: 'return id(boot_complete) && id(applied_palette) != id(ui_palette);'
+          then:
+            - script.execute: apply_shell_palette
+      - script.execute: update_dock_1hz
+
+  - id: sim_flush
+    mode: single
+    then:
+      - script.execute: sim_sync_ui
+      - script.wait: sim_sync_ui
+      - script.wait: apply_shell_palette
+      - delay: 180ms
+      - script.execute: sim_sync_ui
+      - script.wait: sim_sync_ui
+      - lambda: 'lv_refr_now(nullptr);'
+      - delay: 80ms
+
+  - id: run_capture_suite
+    mode: single
+    then:
+      # 01. Boot Splash Screen (showing MAC-derived multi-device URL & login discoverability!)
+      - lambda: |-
+          lv_label_set_text(id(splash_kicker), "LEO'S WORLD & SPACE CLOCK");
+          lv_label_set_text(id(splash_title), "CLOCK READY!");
+          lv_label_set_text(id(splash_sub), "http://world-clock-a1b2c3.local/  ·  192.168.1.42");
+          lv_label_set_text(id(splash_hint), "Web Settings Login:  parent  /  clock-a1b2c3");
+          lv_bar_set_value(id(splash_bar), 100, LV_ANIM_OFF);
+          lv_refr_now(nullptr);
+      - delay: 200ms
+      - snapshot.take: { id: main_display, filename: "01_boot_splash.bmp" }
+
+      # Dismiss splash and populate simulated weather + ISS telemetry
+      - lambda: |-
+          id(boot_complete) = true;
+          lv_obj_add_flag(id(splash_overlay), LV_OBJ_FLAG_HIDDEN);
+          id(cur_wx_temp) = 21.8f;
+          id(cur_wx_feels) = 21.2f;
+          id(cur_wx_high) = 24.0f;
+          id(cur_wx_low) = 13.0f;
+          id(cur_wx_cond) = "sunny";
+          id(cur_wx_3day) = "MON,partlycloudy,23,14|TUE,rainy,19,12|WED,sunny,22,13";
+          id(cur_wx_age_ok) = true;
+          id(iss_cur_lat) = 38.0f;
+          id(iss_cur_lon) = -14.0f;
+          id(iss_vel_lat) = 0.08f;
+          id(iss_vel_lon) = 0.14f;
+          id(iss_fix_ms) = millis();
+          id(iss_has_fix) = true;
+          id(iss_is_eclipsed) = false;
+
+      # 02. Daytime Classic + Live ISS Space Tracker + Sunny Weather (2026-06-21 14:30:00 BST = 13:30:00Z)
+      - lambda: |-
+          id(clock_time).set_epoch(1782048600);
+          id(iss_fix_ms) = millis();
+          id(force_redraw) = true;
+      - script.execute: sim_flush
+      - script.wait: sim_flush
+      - delay: 250ms
+      - lambda: 'lv_refr_now(nullptr);'
+      - snapshot.take: { id: main_display, filename: "02_daytime_iss_sunny.bmp" }
+
+      # Video 1: Live ISS Orbit (35 frames @ 10fps = 3.5s, accelerated orbital drift for clear motion!)
+      - lambda: |-
+          id(iss_cur_lat) = 32.0f;
+          id(iss_cur_lon) = -30.0f;
+          id(iss_vel_lat) = 4.0f;
+          id(iss_vel_lon) = 16.0f;
+          id(iss_fix_ms) = millis();
+      - snapshot.take: { id: main_display, filename: "video_iss_orbit.gif", frames: 35, frame_rate: 10 fps }
+      - delay: 4200ms
+
+      # 03. Daytime Fog Icon + Imperial Units (°F & Miles) (2026-11-12 08:45:00 GMT)
+      - lambda: |-
+          id(iss_cur_lat) = 48.0f;
+          id(iss_cur_lon) = 5.0f;
+          id(iss_vel_lat) = 0.04f;
+          id(iss_vel_lon) = 0.06f;
+          id(iss_fix_ms) = millis();
+          id(use_fahrenheit) = true;
+          id(use_miles) = true;
+          id(cur_wx_temp) = 6.5f;
+          id(cur_wx_feels) = 4.0f;
+          id(cur_wx_high) = 9.0f;
+          id(cur_wx_low) = 2.0f;
+          id(cur_wx_cond) = "fog";
+          id(cur_wx_3day) = "FRI,cloudy,8,1|SAT,snowy,5,-1|SUN,pouring,7,2";
+          id(clock_time).set_epoch(1794473100);
+          id(force_redraw) = true;
+      - script.execute: sim_flush
+      - script.wait: sim_flush
+      - snapshot.take: { id: main_display, filename: "03_daytime_fog_imperial.bmp" }
+
+      # Restore metric & cool autumn weather
+      - lambda: |-
+          id(use_fahrenheit) = false;
+          id(use_miles) = false;
+          id(cur_wx_temp) = 9.2f;
+          id(cur_wx_feels) = 7.8f;
+          id(cur_wx_high) = 12.0f;
+          id(cur_wx_low) = 5.0f;
+          id(cur_wx_cond) = "partlycloudy";
+          id(cur_wx_3day) = "FRI,cloudy,11,6|SAT,rainy,10,4|SUN,sunny,13,7";
+
+      # 04. Evening Wind-Down (Amber) — 2026-11-12 19:12:00 GMT
+      - lambda: |-
+          id(clock_time).set_epoch(1794510720);
+          id(force_redraw) = true;
+      - script.execute: sim_flush
+      - script.wait: sim_flush
+      - snapshot.take: { id: main_display, filename: "04_evening_winddown_amber.bmp" }
+
+      # 05. Deep Sleep Mode (Red + Real Lunar Phase) — 2026-11-21 02:15:00 GMT
+      - lambda: |-
+          id(cur_wx_cond) = "clear-night";
+          id(clock_time).set_epoch(1795227300);
+          id(force_redraw) = true;
+      - script.execute: sim_flush
+      - script.wait: sim_flush
+      - snapshot.take: { id: main_display, filename: "05_deep_sleep_red.bmp" }
+
+      # 06. Morning Quiet Play (Amber + Rising Sun) — 2026-11-21 05:20:00 GMT
+      - lambda: |-
+          id(clock_time).set_epoch(1795238400);
+          id(force_redraw) = true;
+      - script.execute: sim_flush
+      - script.wait: sim_flush
+      - snapshot.take: { id: main_display, filename: "06_morning_quiet_amber.bmp" }
+
+      # 07. Birthday Mode — 2026-06-15 08:15:00 BST (07:15:00Z)
+      - lambda: |-
+          id(cur_wx_temp) = 19.4f;
+          id(cur_wx_feels) = 19.0f;
+          id(cur_wx_high) = 23.0f;
+          id(cur_wx_low) = 12.0f;
+          id(cur_wx_cond) = "sunny";
+          id(clock_time).set_epoch(1781507700);
+          id(force_redraw) = true;
+      - script.execute: sim_flush
+      - script.wait: sim_flush
+      - delay: 300ms
+      - lambda: 'lv_refr_now(nullptr);'
+      - snapshot.take: { id: main_display, filename: "07_birthday_mode.bmp" }
+
+      # 08. Halloween — 2026-10-31 17:30:00 GMT
+      - lambda: |-
+          id(cur_wx_temp) = 10.5f;
+          id(cur_wx_high) = 13.0f;
+          id(cur_wx_low) = 6.0f;
+          id(cur_wx_cond) = "cloudy";
+          id(clock_time).set_epoch(1793467800);
+          id(force_redraw) = true;
+      - script.execute: sim_flush
+      - script.wait: sim_flush
+      - delay: 300ms
+      - lambda: 'lv_refr_now(nullptr);'
+      - snapshot.take: { id: main_display, filename: "08_halloween.bmp" }
+
+      # 09. Christmas Advent — 2026-12-12 16:30:00 GMT
+      - lambda: |-
+          id(cur_wx_temp) = 2.0f;
+          id(cur_wx_feels) = -1.0f;
+          id(cur_wx_high) = 4.0f;
+          id(cur_wx_low) = -1.0f;
+          id(cur_wx_cond) = "snowy";
+          id(cur_wx_3day) = "SUN,snowy,3,-2|MON,cloudy,4,0|TUE,partlycloudy,6,1";
+          id(clock_time).set_epoch(1797093000);
+          id(force_redraw) = true;
+      - script.execute: sim_flush
+      - script.wait: sim_flush
+      - delay: 300ms
+      - lambda: 'lv_refr_now(nullptr);'
+      - snapshot.take: { id: main_display, filename: "09_christmas_advent.bmp" }
+
+      # 10. Christmas Eve Daytime Santa Tracker — 2026-12-24 15:30:00 GMT
+      - lambda: |-
+          id(clock_time).set_epoch(1798126200, 120.0);
+          id(force_redraw) = true;
+      - script.execute: sim_flush
+      - script.wait: sim_flush
+      - delay: 300ms
+      - script.execute: sim_sync_ui
+      - script.wait: sim_sync_ui
+      - script.execute: render_dock
+      - script.wait: render_dock
+      - lambda: 'lv_refr_now(nullptr);'
+      - snapshot.take: { id: main_display, filename: "10_christmas_eve_santa_day.bmp" }
+
+      # Video 2: Live Santa Tracker Gliding (35 frames @ 10fps = 3.5s)
+      - snapshot.take: { id: main_display, filename: "video_santa_tracker.gif", frames: 35, frame_rate: 10 fps }
+      - delay: 4200ms
+
+      # 11. Christmas Eve Evening Wind-Down (Amber + Santa STILL Flying!) — 2026-12-24 19:15:00 GMT
+      - lambda: |-
+          id(clock_time).set_epoch(1798139700, 1.0);
+          id(force_redraw) = true;
+      - script.execute: sim_flush
+      - script.wait: sim_flush
+      - delay: 300ms
+      - script.execute: sim_sync_ui
+      - script.wait: sim_sync_ui
+      - script.execute: render_dock
+      - script.wait: render_dock
+      - lambda: 'lv_refr_now(nullptr);'
+      - snapshot.take: { id: main_display, filename: "11_christmas_eve_santa_winddown.bmp" }
+
+      # 12. Christmas Day Morning — 2026-12-25 07:30:00 GMT
+      - lambda: |-
+          id(cur_wx_temp) = 1.0f;
+          id(cur_wx_cond) = "snowy";
+          id(clock_time).set_epoch(1798183800);
+          id(force_redraw) = true;
+      - script.execute: sim_flush
+      - script.wait: sim_flush
+      - delay: 300ms
+      - lambda: 'lv_refr_now(nullptr);'
+      - snapshot.take: { id: main_display, filename: "12_christmas_day.bmp" }
+
+      # 13. Easter Egg Hunt — 2026-04-05 10:00:00 BST (09:00:00Z)
+      - lambda: |-
+          id(cur_wx_temp) = 14.5f;
+          id(cur_wx_high) = 17.0f;
+          id(cur_wx_low) = 7.0f;
+          id(cur_wx_cond) = "partlycloudy";
+          id(clock_time).set_epoch(1775379600);
+          id(force_redraw) = true;
+      - script.execute: sim_flush
+      - script.wait: sim_flush
+      - delay: 300ms
+      - lambda: 'lv_refr_now(nullptr);'
+      - snapshot.take: { id: main_display, filename: "13_easter_egg_hunt.bmp" }
+
+      # 14. New Year's Eve Fireworks (Evening before bedtime!) — 2026-12-31 18:45:00 GMT
+      - lambda: |-
+          id(cur_wx_temp) = 4.0f;
+          id(cur_wx_feels) = 2.0f;
+          id(cur_wx_high) = 6.0f;
+          id(cur_wx_low) = 1.0f;
+          id(cur_wx_cond) = "clear-night";
+          id(clock_time).set_epoch(1798742700);
+          id(force_redraw) = true;
+      - script.execute: sim_flush
+      - script.wait: sim_flush
+      - delay: 1100ms
+      - lambda: 'lv_refr_now(nullptr);'
+      - snapshot.take: { id: main_display, filename: "14_nye_fireworks.bmp" }
+
+      # Video 3: Fireworks Bursting (35 frames @ 10fps = 3.5s)
+      - snapshot.take: { id: main_display, filename: "video_fireworks.gif", frames: 35, frame_rate: 10 fps }
+      - delay: 4200ms
+
+      # 15. Star Wars Day — 2026-05-04 14:00:00 BST (13:00:00Z)
+      - lambda: |-
+          id(cur_wx_temp) = 16.0f;
+          id(cur_wx_high) = 19.0f;
+          id(cur_wx_low) = 9.0f;
+          id(cur_wx_cond) = "sunny";
+          id(clock_time).set_epoch(1777899600);
+          id(force_redraw) = true;
+      - script.execute: sim_flush
+      - script.wait: sim_flush
+      - delay: 300ms
+      - lambda: 'lv_refr_now(nullptr);'
+      - snapshot.take: { id: main_display, filename: "15_star_wars_day.bmp" }
+
+      # Video 4: Full 4-Phase Circadian Cycle Walkthrough (40 frames @ 8fps = 5.0s)
+      - lambda: |-
+          id(cur_wx_temp) = 11.4f;
+          id(cur_wx_high) = 14.0f;
+          id(cur_wx_low) = 6.0f;
+          id(cur_wx_cond) = "partlycloudy";
+          id(cur_wx_3day) = "FRI,cloudy,11,6|SAT,rainy,10,4|SUN,sunny,13,7";
+          id(iss_cur_lat) = 42.0f;
+          id(iss_cur_lon) = -5.0f;
+          id(iss_fix_ms) = millis();
+          id(clock_time).set_epoch(1794509400);  // 18:50 Day
+          id(force_redraw) = true;
+      - script.execute: sim_flush
+      - script.wait: sim_flush
+      - snapshot.take: { id: main_display, filename: "video_circadian_cycle.gif", frames: 40, frame_rate: 8 fps }
+      - delay: 1100ms
+      - lambda: |-
+          id(clock_time).set_epoch(1794510720);  // 19:12 Evening Wind-Down (Amber)
+          id(force_redraw) = true;
+      - script.execute: sim_sync_ui
+      - delay: 1200ms
+      - lambda: |-
+          id(clock_time).set_epoch(1795227300);  // 02:15 Deep Sleep (Red)
+          id(force_redraw) = true;
+      - script.execute: sim_sync_ui
+      - delay: 1200ms
+      - lambda: |-
+          id(clock_time).set_epoch(1795238400);  // 05:20 Morning Quiet Play (Amber)
+          id(force_redraw) = true;
+      - script.execute: sim_sync_ui
+      - delay: 1200ms
+      - lambda: |-
+          id(clock_time).set_epoch(1795243200);  // 06:40 Wake-Up Day!
+          id(force_redraw) = true;
+      - script.execute: sim_sync_ui
+      - delay: 1200ms
+      - lambda: |-
+          ESP_LOGI("sim", "All Leo standalone simulator captures complete! Exiting cleanly.");
+          std::exit(0);
+
+interval:
+  - interval: 1s
+    then:
+      - if:
+          condition:
+            lambda: 'return id(boot_complete);'
+          then:
+            - script.execute: sim_sync_ui
+
+esphome:
+  on_boot:
+    - priority: -200
+      then:
+        - delay: 300ms
+        - script.execute: run_capture_suite

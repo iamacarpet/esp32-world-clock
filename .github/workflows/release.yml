@@ -1,0 +1,122 @@
+name: Release — Build Standalone Firmware & Publish Assets
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag name (e.g. v1.0.0)"
+        required: true
+        default: "v0.1.0-test"
+
+permissions:
+  contents: write
+
+env:
+  ESPHOME_VERSION: "2026.10.2"
+
+jobs:
+  build-and-release:
+    name: Build Universal Standalone Firmware & Publish Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine release tag
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Run C++ unit tests
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Icomponents/world_clock tests/test_clock_math.cpp -o /tmp/test_clock_math
+          /tmp/test_clock_math
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system tools (ImageMagick & FFmpeg)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends imagemagick ffmpeg
+
+      - name: Cache PlatformIO & ESP-IDF toolchains
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: esphome-release-${{ env.ESPHOME_VERSION }}-${{ hashFiles('packages/*.yaml', 'components/world_clock/*') }}
+          restore-keys: |
+            esphome-release-${{ env.ESPHOME_VERSION }}-
+
+      - name: Install ESPHome ${{ env.ESPHOME_VERSION }}
+        run: pip install --no-cache-dir "esphome==${{ env.ESPHOME_VERSION }}"
+
+      - name: Stage release credentials (Captive Portal AP & default Web UI login)
+        run: |
+          cat > examples/secrets.yaml <<'EOF'
+          ap_password: "ClockSetup123"
+          web_auth_user: "parent"
+          web_auth_pass: "ClockSetup123"
+          EOF
+
+      - name: Compile universal standalone ESP32-S3 firmware
+        run: esphome compile examples/world-clock-standalone-release.yaml
+
+      - name: Run headless emulator for release media
+        run: python3 scripts/run_emulator.py --out sim_output
+
+      - name: Package release assets
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          mkdir -p release_assets
+          BUILD_DIR="examples/.esphome/build/world-clock/.pioenvs/world-clock"
+          cp "${BUILD_DIR}/firmware.ota.bin" "release_assets/world-clock-standalone-${TAG}-ota.bin"
+          cp "${BUILD_DIR}/firmware.factory.bin" "release_assets/world-clock-standalone-${TAG}-factory.bin"
+          cp sim_output/overview_gallery.png "release_assets/overview_gallery.png"
+          if [ -f sim_output/demo_reel.mp4 ]; then
+            cp sim_output/demo_reel.mp4 "release_assets/demo_reel.mp4"
+          fi
+          (cd release_assets && sha256sum *.bin > SHA256SUMS.txt)
+          ls -lh release_assets/
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: "World & Space Clock ${{ steps.meta.outputs.tag }}"
+          generate_release_notes: true
+          body: |
+            ## Pre-Built Standalone Firmware (Guition JC8048W550N, ESP32-S3)
+
+            No ESPHome installation or Home Assistant required!
+
+            ### Multi-Device Ready (Hardware MAC Auto-Identity)
+            You can run **multiple clocks in the same home** from this single `.bin` file with zero collisions:
+            - **Unique Hostname**: `http://world-clock-<mac6>.local/`
+            - **Unique Setup Hotspot**: `world-clock-<mac6>` (password: `ClockSetup123`)
+            - **Unique Web Settings Login**: username `parent`, password `clock-<mac6>`
+            - **Zero Setup Card Needed**: Unplug & plug in any clock at any time — its exact URL, IP address, and `parent / clock-<mac6>` login are displayed right on the 5-inch boot screen!
+
+            ### Updating an Existing Clock Wirelessly (iPhone / Laptop)
+            1. Download **`world-clock-standalone-${{ steps.meta.outputs.tag }}-ota.bin`** below.
+            2. Open your clock's URL (`http://world-clock-<mac6>.local/` or its IP address) in Safari/Chrome and sign in (`parent` / `clock-<mac6>`).
+            3. Scroll to **OTA Update**, choose the `-ota.bin` file you just downloaded, and tap **Update**.
+            4. Your saved Wi-Fi, child's name, birth date, location, 4-phase sleep schedule, brightness, and custom wording are all preserved automatically!
+
+            ### First-Time USB Flash (Brand-New Display)
+            1. Flash **`world-clock-standalone-${{ steps.meta.outputs.tag }}-factory.bin`** at offset `0x0` using [ESP Web Tools](https://web.esphome.io/) or `esptool.py`.
+            2. Power on the clock — after 15 seconds it opens its unique setup Wi-Fi hotspot (`world-clock-<mac6>`, password `ClockSetup123`), shown right on the screen.
+            3. Join that hotspot on your phone to connect the clock to your home Wi-Fi.
+            4. Once connected, read the URL and login shown on the boot screen to customize the child's name, birth date, location, sleep schedule, and messages.
+          files: |
+            release_assets/*

@@ -1,7 +1,9 @@
 #pragma once
 
 #include "clock_math.h"
+#ifdef USE_ESP32
 #include <esp_heap_caps.h>
+#endif
 #include <lvgl.h>
 #include "esphome/core/application.h"
 
@@ -30,7 +32,11 @@ struct WorldMapParams {
 
 inline uint8_t *ensure_bg_cache(uint8_t *&bg_cache) {
   if (bg_cache == nullptr) {
+#ifdef USE_ESP32
     bg_cache = (uint8_t *)heap_caps_malloc(kBgBytes + kScratchBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
+    bg_cache = (uint8_t *)std::malloc(kBgBytes + kScratchBytes);
+#endif
   }
   return bg_cache;
 }

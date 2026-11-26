@@ -1,0 +1,133 @@
+name: CI — Build, Test & Emulate
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ESPHOME_VERSION: "2026.10.2"
+
+jobs:
+  unit-tests:
+    name: C++ Unit Tests & Privacy Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile & run clock_math unit tests
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Icomponents/world_clock tests/test_clock_math.cpp -o /tmp/test_clock_math
+          /tmp/test_clock_math
+
+  emulator-captures:
+    name: Headless Emulator Screenshots & Videos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system tools (ImageMagick & FFmpeg)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends imagemagick ffmpeg
+
+      - name: Cache ESPHome & PlatformIO host packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+            sim/.esphome
+          key: esphome-host-${{ env.ESPHOME_VERSION }}-${{ hashFiles('packages/*.yaml', 'components/world_clock/*', 'sim/*.yaml') }}
+          restore-keys: |
+            esphome-host-${{ env.ESPHOME_VERSION }}-
+
+      - name: Install ESPHome ${{ env.ESPHOME_VERSION }}
+        run: pip install --no-cache-dir "esphome==${{ env.ESPHOME_VERSION }}"
+
+      - name: Run headless emulators & capture all modes
+        run: python3 scripts/run_emulator.py --out sim_output
+
+      - name: Upload emulator screenshots & videos
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulator-screenshots-and-videos
+          path: sim_output/
+          retention-days: 30
+
+  build-firmware:
+    name: ESP32-S3 Firmware (${{ matrix.config.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - name: leo-clock-standalone
+            file: examples/leo-clock-standalone.yaml
+            dev_name: leo-clock
+            upload_bin: false
+          - name: world-clock-standalone-release
+            file: examples/world-clock-standalone-release.yaml
+            dev_name: world-clock
+            upload_bin: true
+          - name: leo-clock-ha
+            file: examples/leo-clock-ha.yaml
+            dev_name: leo-clock-ha
+            upload_bin: false
+          - name: office-clock-energy-ha
+            file: examples/office-clock-energy-ha.yaml
+            dev_name: office-world-clock
+            upload_bin: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache PlatformIO & ESP-IDF toolchains
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: esphome-esp32s3-${{ env.ESPHOME_VERSION }}-${{ matrix.config.name }}-${{ hashFiles('packages/*.yaml', 'components/world_clock/*') }}
+          restore-keys: |
+            esphome-esp32s3-${{ env.ESPHOME_VERSION }}-${{ matrix.config.name }}-
+            esphome-esp32s3-${{ env.ESPHOME_VERSION }}-
+
+      - name: Install ESPHome ${{ env.ESPHOME_VERSION }}
+        run: pip install --no-cache-dir "esphome==${{ env.ESPHOME_VERSION }}"
+
+      - name: Stage example secrets.yaml for CI build
+        run: cp secrets.yaml.example examples/secrets.yaml
+
+      - name: Compile ESP32-S3 firmware (${{ matrix.config.file }})
+        run: esphome compile "${{ matrix.config.file }}"
+
+      - name: Stage compiled firmware binaries
+        if: matrix.config.upload_bin
+        run: |
+          mkdir -p dist
+          BUILD_DIR="examples/.esphome/build/${{ matrix.config.dev_name }}/.pioenvs/${{ matrix.config.dev_name }}"
+          cp "${BUILD_DIR}/firmware.ota.bin" "dist/${{ matrix.config.name }}-ota.bin"
+          cp "${BUILD_DIR}/firmware.factory.bin" "dist/${{ matrix.config.name }}-factory.bin"
+          ls -lh dist/
+
+      - name: Upload compiled standalone firmware artifact
+        if: matrix.config.upload_bin
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.config.name }}
+          path: dist/
+          retention-days: 14

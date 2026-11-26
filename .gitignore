@@ -1,6 +1,9 @@
 # ESPHome build artifacts & secrets
 /.esphome/
 /examples/.esphome/
+/sim/.esphome/
+/sim/.gitignore
+/sim_output/
 __pycache__/
 *.pyc
 /secrets.yaml

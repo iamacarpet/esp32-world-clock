@@ -1,0 +1,142 @@
+# Headless Emulator: Adult / Office Desk World Map + Live HA Energy Dock!
+# Renders the exact packages/dock_energy_ha.yaml 4-tile Solar/Load/Battery/Grid & Tariff strip.
+
+substitutions:
+  dev_name: office-clock-sim
+  display_name: "Office World Clock (Sim)"
+  splash_kicker_text: "OFFICE WORLD & ENERGY CLOCK"
+  default_child_name: "OFFICE"
+  default_birth_year: "1985"
+  default_location: "LONDON UK"
+  default_lat: "51.5074"
+  default_lon: "-0.1278"
+  timezone: "Europe/London"
+  default_use_24h: "true"
+  default_use_fahrenheit: "false"
+  default_use_miles: "false"
+  default_night_lights: "true"
+  default_santa_in_winddown: "false"
+  # Placeholder entity IDs (populated directly via publish_state in simulator)
+  energy_pv1_entity: "sensor.sim_pv1"
+  energy_pv2_entity: "sensor.sim_pv2"
+  energy_pv_daily_entity: "sensor.sim_pv_daily"
+  energy_home_load_entity: "sensor.sim_load"
+  energy_batt_soc_entity: "sensor.sim_soc"
+  energy_batt_power_entity: "sensor.sim_batt_w"
+  energy_grid_power_entity: "sensor.sim_grid_w"
+  energy_import_rate_entity: "sensor.sim_import_rate"
+  energy_export_rate_entity: "sensor.sim_export_rate"
+  energy_off_peak_entity: "binary_sensor.sim_off_peak"
+  energy_smart_dispatch_entity: "binary_sensor.sim_smart_dispatch"
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [world_clock]
+
+api:
+  reboot_timeout: 0s
+
+packages:
+  hardware: !include hardware_host_snapshot.yaml
+  fonts: !include ../packages/fonts.yaml
+  ui_shell: !include ../packages/ui_shell.yaml
+  dock: !include ../packages/dock_energy_ha.yaml
+  core: !include ../packages/clock_core.yaml
+
+script:
+  - id: render_office_frame
+    mode: single
+    then:
+      - lambda: |-
+          auto now = id(clock_time).now();
+          if (!now.is_valid()) return;
+
+          uint8_t pal = id(ui_palette);
+          lv_label_set_text(id(wifi_icon_label), "\U000F0928");
+          lv_obj_set_style_text_color(id(wifi_icon_label), lv_color_hex((pal == 0) ? 0x787882 : 0x7A1812), 0);
+          lv_label_set_text(id(sync_icon_label), "\U000F07D0");
+          lv_obj_set_style_text_color(id(sync_icon_label), lv_color_hex((pal == 0) ? 0x787882 : 0x7A1812), 0);
+
+          char cbuf[24];
+          snprintf(cbuf, sizeof(cbuf), "%02d\u2236%02d\u2236%02d", now.hour, now.minute, now.second);
+          lv_obj_add_flag(id(ampm_label), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_set_x(id(clock_label), -42);
+          lv_label_set_text(id(clock_label), cbuf);
+
+          char dbuf[48];
+          now.strftime(dbuf, sizeof(dbuf), "%A, %d %b %Y");
+          lv_label_set_text(id(date_label), dbuf);
+          lv_label_set_text(id(loc_label), "LONDON UK");
+          lv_obj_set_size(id(loc_pill), LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+          lv_obj_update_layout(lv_obj_get_parent(id(date_label)));
+          lv_obj_align_to(id(loc_pill), id(date_label), LV_ALIGN_OUT_RIGHT_MID, 10, 0);
+      - script.execute: apply_shell_palette
+      - script.wait: apply_shell_palette
+      - script.execute: update_dock_1hz
+      - script.wait: update_dock_1hz
+      - delay: 250ms
+      - lambda: 'lv_refr_now(nullptr);'
+      - delay: 100ms
+
+esphome:
+  on_boot:
+    - priority: -200
+      then:
+        - delay: 300ms
+        # 16. Daytime Solar Export + ISS
+        - lambda: |-
+            id(boot_complete) = true;
+            lv_obj_add_flag(id(splash_overlay), LV_OBJ_FLAG_HIDDEN);
+            id(sleep_phase) = 0;
+            id(ui_palette) = 0;
+            id(active_occasion) = 1;
+            id(clock_time).set_epoch(1782048600);  // 2026-06-21 14:30 BST
+            id(iss_cur_lat) = 44.0f;
+            id(iss_cur_lon) = 10.0f;
+            id(iss_vel_lat) = 0.05f;
+            id(iss_vel_lon) = 0.08f;
+            id(iss_fix_ms) = millis();
+            id(iss_has_fix) = true;
+            lv_label_set_text(id(ticker_label), "SPACE STATION (ISS) \u2192 OVER UK & EUROPE");
+            id(energy_pv1_w).publish_state(2450.0f);
+            id(energy_pv2_w).publish_state(1980.0f);
+            id(energy_pv_daily_kwh).publish_state(24.6f);
+            id(energy_home_load_w).publish_state(1420.0f);
+            id(energy_batt_soc).publish_state(84.0f);
+            id(energy_batt_power_w).publish_state(-1250.0f);
+            id(energy_grid_power_w).publish_state(-1760.0f);
+            id(energy_import_rate).publish_state(0.245f);
+            id(energy_export_rate).publish_state(0.150f);
+            id(energy_off_peak).publish_state(false);
+            id(energy_smart_dispatch).publish_state(false);
+        - script.execute: render_office_frame
+        - script.wait: render_office_frame
+        - snapshot.take: { id: main_display, filename: "16_office_energy_dock.bmp" }
+
+        # 17. Evening Smart-Dispatch Off-Peak Charging
+        - lambda: |-
+            id(clock_time).set_epoch(1794519000);  // 2026-11-12 21:30 GMT
+            lv_label_set_text(id(ticker_label), "ISS (NIGHT SIDE) \u2192 OVER ATLANTIC OCEAN");
+            id(iss_cur_lat) = 28.0f;
+            id(iss_cur_lon) = -35.0f;
+            id(iss_fix_ms) = millis();
+            id(energy_pv1_w).publish_state(0.0f);
+            id(energy_pv2_w).publish_state(0.0f);
+            id(energy_pv_daily_kwh).publish_state(11.4f);
+            id(energy_home_load_w).publish_state(7450.0f);
+            id(energy_batt_soc).publish_state(38.0f);
+            id(energy_batt_power_w).publish_state(-3600.0f);
+            id(energy_grid_power_w).publish_state(11050.0f);
+            id(energy_import_rate).publish_state(0.070f);
+            id(energy_export_rate).publish_state(0.150f);
+            id(energy_off_peak).publish_state(true);
+            id(energy_smart_dispatch).publish_state(true);
+        - script.execute: render_office_frame
+        - script.wait: render_office_frame
+        - snapshot.take: { id: main_display, filename: "17_office_energy_smart_slot.bmp" }
+
+        - lambda: |-
+            ESP_LOGI("sim", "Office energy simulator captures complete! Exiting cleanly.");
+            std::exit(0);

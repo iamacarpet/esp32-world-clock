@@ -1,0 +1,59 @@
+# Universal Pre-Built Standalone Release Firmware (Guition JC8048W550N, ESP32-S3)
+# Built automatically by GitHub Actions on every tagged release (v*).
+#
+# - Zero hardcoded Wi-Fi credentials: joins saved NVS Wi-Fi on boot, or opens
+#   the "World Clock Setup" captive portal hotspot after 15 seconds.
+# - All profile, location, schedule, brightness & wording settings are configured
+#   live at http://world-clock.local/ and preserved in NVS across wireless OTA updates.
+
+substitutions:
+  dev_name: world-clock
+  display_name: "World Clock"
+  device_comment: "Universal Standalone Dual-Core World & Space Clock (Guition JC8048W550N)"
+  splash_kicker_text: "WORLD & SPACE CLOCK"
+  default_child_name: "LEO"
+  default_birth_date: "2019-06-15"
+  default_birth_year: "2019"
+  default_location: "LONDON UK"
+  default_lat: "51.5074"
+  default_lon: "-0.1278"
+  timezone: "Europe/London"
+  default_winddown_time: "19:00:00"
+  default_bedtime: "19:30:00"
+  default_quiet_time: "05:00:00"
+  default_wakeup_time: "06:30:00"
+  default_use_24h: "false"
+  default_use_fahrenheit: "false"
+  default_use_miles: "false"
+  default_night_lights: "true"
+  default_santa_in_winddown: "true"
+  fullscreen_watchdog: "false"
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [world_clock]
+
+packages:
+  hardware: !include ../packages/hardware_jc8048w550n.yaml
+  fonts: !include ../packages/fonts.yaml
+  ui_shell: !include ../packages/ui_shell.yaml
+  dock: !include ../packages/dock_weather.yaml
+  core: !include ../packages/clock_core.yaml
+  backend: !include ../packages/backend_standalone.yaml
+
+# Multi-device safe: automatically appends the ESP32's unique 6-char hardware MAC suffix
+# to hostname (http://world-clock-<mac6>.local/), setup hotspot (world-clock-<mac6>),
+# and Web UI login password (parent / clock-<mac6>), all shown right on the boot screen!
+esphome:
+  name_add_mac_suffix: true
+
+# Strip compiled-in Wi-Fi credentials so the release binary uses Captive Portal / NVS Wi-Fi
+wifi:
+  ssid: !remove
+  password: !remove
+  ap:
+    ssid: !remove
+    password: !secret ap_password
+    ap_timeout: 15s
