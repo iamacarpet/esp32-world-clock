@@ -16,6 +16,7 @@ struct SpriteFrameParams {
   uint8_t sleep_phase{0};
   bool keep_santa_winddown{true};
   bool manual_santa_preview{false};
+  bool tooth_fairy_mode{false};
   float home_lat{51.5074f};
   float home_lon{-0.1278f};
   std::string home_label{"LONDON UK"};
@@ -175,7 +176,8 @@ class SpriteEngine {
 
     const uint8_t mode = p.mode;
     const bool santa_winddown = (p.sleep_phase == 3 && mode == 4 && p.keep_santa_winddown);
-    const bool run_sprites = (p.sleep_phase == 0 && mode != 0) || santa_winddown;
+    const bool tooth_fairy_wd = (p.sleep_phase == 3 && p.tooth_fairy_mode && !santa_winddown);
+    const bool run_sprites = (p.sleep_phase == 0 && mode != 0) || santa_winddown || tooth_fairy_wd;
 
     if (!run_sprites) {
       hide_badge();
@@ -268,7 +270,21 @@ class SpriteEngine {
 
     if (mode != 1 && mode != 4) hide_badge();
 
-    if (mode == 1) {
+    if (tooth_fairy_wd) {
+      hide_badge();
+      // Gentle golden fairy-dust sparkles floating across the amber map
+      float hpx, hpy;
+      latlon_to_map_xy(home_lat, home_lon, hpx, hpy);
+      for (size_t i = 0; i < 8; i++) {
+        float ang = (float)tk * 0.055f + (float)i * 0.7854f;
+        float rad = 22.0f + 16.0f * sinf((float)tk * 0.04f + (float)i * 1.3f) + (float)(i % 3) * 14.0f;
+        float sx = hpx + cosf(ang) * rad * 1.45f;
+        float sy = hpy + sinf(ang) * rad * 0.75f;
+        float tw = 0.35f + 0.65f * (0.5f + 0.5f * sinf((float)tk * 0.25f + (float)i * 2.1f));
+        spr_disc(sx, sy, 2.2f * tw + 0.6f, 255.0f, 195.0f, 75.0f, 0.90f * tw);
+        record_spr(i, (int)sx - 4, (int)sy - 4, (int)sx + 4, (int)sy + 4);
+      }
+    } else if (mode == 1) {
       if (!p.iss_has_fix) {
         hide_badge();
       } else {
@@ -773,6 +789,29 @@ class SpriteEngine {
             record_spr(2 + s, (int)lx - 2, (int)sy - 4, (int)lx + 9, (int)sy + 4);
           }
         }
+      }
+    }
+
+    // Subtle Shooting Star / Meteor Shower easter egg (Perseids Aug 11-13, Geminids Dec 13-14, or occasional twilight streak)
+    if (p.sleep_phase == 0 && mode == 1) {
+      bool shower = p.loc_valid && is_meteor_shower(p.loc_month, p.loc_day);
+      uint32_t m_period = shower ? 55UL : 240UL;
+      uint32_t m_phase = tk % m_period;
+      if (m_phase < 14UL) {
+        uint32_t cycle = tk / m_period;
+        float start_x = 120.0f + (float)((cycle * 197UL) % 520UL);
+        float start_y = 22.0f + (float)((cycle * 73UL) % 90UL);
+        float frac = (float)m_phase / 14.0f;
+        float mx = start_x + frac * 78.0f;
+        float my = start_y + frac * 34.0f;
+        float env = sinf(frac * (float)M_PI);
+        for (int t = 0; t < 12; t++) {
+          float tx = mx - (float)t * 2.4f;
+          float ty = my - (float)t * 1.05f;
+          float ta = env * (1.0f - (float)t / 12.0f);
+          spr_disc(tx, ty, (t == 0) ? 1.8f : 1.0f, 255.0f, 235.0f, 185.0f, ta * 0.92f);
+        }
+        record_spr(22, (int)mx - 34, (int)my - 18, (int)mx + 5, (int)my + 5);
       }
     }
 

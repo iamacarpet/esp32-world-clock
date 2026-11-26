@@ -5,6 +5,7 @@
 #if defined(USE_WORLD_CLOCK_NET_WORKER)
 
 #include "clock_math.h"
+#include "ics_parser.h"
 #include <esp_crt_bundle.h>
 #include <esp_heap_caps.h>
 #include <esp_http_client.h>
@@ -19,11 +20,15 @@ struct StandaloneTelemetry {
   bool lock{false};
   bool sync_busy{false};
   bool force_sync{false};
+  bool cal_force_sync{false};
   bool ota_active{false};
   uint8_t sleep_phase{1};
   uint8_t active_occasion{1};
   float work_lat{51.5074f};
   float work_lon{-0.1278f};
+  int loc_year{0};
+  int loc_month{0};
+  int loc_day{0};
 
   // Weather payload (Core 0 writes under lock; Core 1 reads non-blocking)
   bool wx_valid{false};
@@ -43,6 +48,13 @@ struct StandaloneTelemetry {
   float iss_lon{0.0f};
   bool iss_eclipsed{false};
 
+  // Optional iCloud / Google / School Calendar (.ics / webcal://) feeds
+  char family_cal_url[256]{""};
+  char school_cal_url[256]{""};
+  IcsFeedSummary family_cal{};
+  IcsFeedSummary school_cal{};
+  bool cal_dirty{false};
+
   // Callbacks injected at boot so net_worker.h doesn't hardcode component variable names
   bool (*is_wifi_connected)(){nullptr};
   bool (*is_time_valid)(){nullptr};
@@ -61,8 +73,8 @@ class NetWorker {
     t.work_lon = init_lon;
     t.is_wifi_connected = wifi_fn;
     t.is_time_valid = time_fn;
-    // 12KB stack on Core 0 gives generous headroom for mbedTLS + crt_bundle verification
-    xTaskCreatePinnedToCore(&NetWorker::task_loop, "cloud_sync", 12288, nullptr, 1, nullptr, 0);
+    // 14KB stack on Core 0 gives generous headroom for mbedTLS + crt_bundle + streaming ICS parser
+    xTaskCreatePinnedToCore(&NetWorker::task_loop, "cloud_sync", 14336, nullptr, 1, nullptr, 0);
   }
 
  private:
@@ -82,6 +94,14 @@ class NetWorker {
         hb->len += copy_n;
         hb->data[hb->len] = '\0';
       }
+    }
+    return ESP_OK;
+  }
+
+  static esp_err_t on_ics_stream_data(esp_http_client_event_t *evt) {
+    if (evt->event_id == HTTP_EVENT_ON_DATA && evt->user_data != nullptr && evt->data_len > 0) {
+      IcsStreamParser *parser = (IcsStreamParser *)evt->user_data;
+      parser->feed((const char *)evt->data, (size_t)evt->data_len);
     }
     return ESP_OK;
   }
@@ -112,6 +132,36 @@ class NetWorker {
     return (err == ESP_OK && status == 200 && hb.len > 10);
   }
 
+  // Streams arbitrarily large iCloud / Google / School .ics feeds straight into IcsStreamParser (< 2 KB RAM)
+  static bool fetch_ics_stream(const char *raw_url, IcsStreamParser &parser, char *norm_url, size_t norm_cap) {
+    if (!normalize_calendar_url(raw_url, norm_url, norm_cap)) return false;
+    bool use_tls = (strncasecmp(norm_url, "https://", 8) == 0);
+    esp_http_client_config_t cfg = {};
+    cfg.url = norm_url;
+    cfg.method = HTTP_METHOD_GET;
+    cfg.timeout_ms = 10000;
+    cfg.buffer_size = 2048;
+    cfg.buffer_size_tx = 512;
+    cfg.event_handler = &NetWorker::on_ics_stream_data;
+    cfg.user_data = &parser;
+    if (use_tls) cfg.crt_bundle_attach = esp_crt_bundle_attach;
+    cfg.disable_auto_redirect = false;
+    cfg.max_redirection_count = 3;
+
+    esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    if (client == nullptr) return false;
+    esp_http_client_set_header(client, "Accept-Encoding", "identity");
+    esp_http_client_set_header(client, "Connection", "close");
+    esp_http_client_set_header(client, "User-Agent", "WorldClock/1.0");
+
+    esp_err_t err = esp_http_client_perform(client);
+    int status = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+    if (err != ESP_OK || status < 200 || status >= 300) return false;
+    parser.finish();
+    return parser.summary().valid;
+  }
+
   static void task_loop(void *) {
     auto &t = standalone_telemetry();
     constexpr size_t kRxCap = 4096;
@@ -124,6 +174,7 @@ class NetWorker {
 
     uint32_t next_wx_ms = 0;
     uint32_t next_iss_ms = 0;
+    uint32_t next_cal_ms = 0;
     uint32_t wx_backoff_ms = 15000UL;
     uint32_t iss_backoff_ms = 15000UL;
     uint32_t wifi_up_ms = 0;
@@ -151,6 +202,7 @@ class NetWorker {
           sntp_ready_once = true;
           next_wx_ms = now_ms;
           next_iss_ms = now_ms;
+          next_cal_ms = now_ms + 3000UL;
         } else {
           continue;
         }
@@ -159,6 +211,10 @@ class NetWorker {
       if (__atomic_exchange_n(&t.force_sync, false, __ATOMIC_ACQ_REL)) {
         next_wx_ms = now_ms;
         next_iss_ms = now_ms;
+        next_cal_ms = now_ms;
+      }
+      if (__atomic_exchange_n(&t.cal_force_sync, false, __ATOMIC_ACQ_REL)) {
+        next_cal_ms = now_ms;
       }
 
       // 1. Open-Meteo Weather + 3-Day Forecast
@@ -291,10 +347,58 @@ class NetWorker {
         }
         __atomic_store_n(&t.sync_busy, false, __ATOMIC_RELEASE);
       }
+
+      // 3. Optional Family & School Calendar (.ics / webcal://) Streaming Poll (every 30 min)
+      now_ms = esphome::millis();
+      if ((int32_t)(now_ms - next_cal_ms) >= 0) {
+        char fam_u[256] = "";
+        char sch_u[256] = "";
+        int cy = 0, cm = 0, cd = 0;
+        while (__atomic_test_and_set(&t.lock, __ATOMIC_ACQUIRE)) vTaskDelay(1);
+        snprintf(fam_u, sizeof(fam_u), "%s", t.family_cal_url);
+        snprintf(sch_u, sizeof(sch_u), "%s", t.school_cal_url);
+        cy = t.loc_year;
+        cm = t.loc_month;
+        cd = t.loc_day;
+        __atomic_clear(&t.lock, __ATOMIC_RELEASE);
+
+        if (cy >= 2024 && (fam_u[0] != '\0' || sch_u[0] != '\0')) {
+          __atomic_store_n(&t.sync_busy, true, __ATOMIC_RELEASE);
+          IcsFeedSummary fam_res{};
+          IcsFeedSummary sch_res{};
+          bool ok_fam = false, ok_sch = false;
+
+          if (fam_u[0] != '\0') {
+            IcsStreamParser p_fam(cy, cm, cd, false);
+            ok_fam = fetch_ics_stream(fam_u, p_fam, url_buf, kUrlCap);
+            if (ok_fam) fam_res = p_fam.summary();
+            vTaskDelay(pdMS_TO_TICKS(100));
+          }
+          if (sch_u[0] != '\0') {
+            IcsStreamParser p_sch(cy, cm, cd, true);
+            ok_sch = fetch_ics_stream(sch_u, p_sch, url_buf, kUrlCap);
+            if (ok_sch) sch_res = p_sch.summary();
+          }
+
+          while (__atomic_test_and_set(&t.lock, __ATOMIC_ACQUIRE)) vTaskDelay(1);
+          if (fam_u[0] == '\0') t.family_cal = IcsFeedSummary{};
+          else if (ok_fam) t.family_cal = fam_res;
+          if (sch_u[0] == '\0') t.school_cal = IcsFeedSummary{};
+          else if (ok_sch) t.school_cal = sch_res;
+          t.cal_dirty = true;
+          __atomic_clear(&t.lock, __ATOMIC_RELEASE);
+
+          __atomic_store_n(&t.sync_busy, false, __ATOMIC_RELEASE);
+          next_cal_ms = esphome::millis() + ((ok_fam || ok_sch) ? 1800000UL : 120000UL);
+        } else {
+          // Wait briefly until local date is synced or a calendar URL is configured
+          next_cal_ms = esphome::millis() + 15000UL;
+        }
+      }
     }
   }
 };
 
 }  // namespace world_clock
 
-#endif  // USE_ESP32 && USE_HTTP_REQUEST
+#endif  // USE_WORLD_CLOCK_NET_WORKER

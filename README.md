@@ -5,9 +5,13 @@ A high-craft, dual-core **ESPHome + LVGL 9** 800×480 digital clock, world day/n
 ![World & Space Clock Overview Gallery](docs/media/overview_gallery.png)
 
 Available in **three plug-and-play flavours** from one modular codebase:
-1. **Universal Standalone Kids Clock** (`examples/world-clock-standalone-release.yaml` / `examples/leo-clock-standalone.yaml`) — Zero Home Assistant needed! Core 0 background worker polls Open-Meteo & live ISS feeds, Google Public NTP, Captive Portal Wi-Fi setup, automatic per-device MAC hostname & login, and a full iPhone-friendly local Web UI.
-2. **Home Assistant Kids Clock** (`examples/leo-clock-ha.yaml`) — Native encrypted ESPHome API with HA weather, ISS, time, and 4-phase circadian dimming.
+1. **Universal Standalone Kids Clock** (`examples/world-clock-standalone-release.yaml` / `examples/leo-clock-standalone.yaml`) — Zero Home Assistant needed! Core 0 background worker polls Open-Meteo, live ISS feeds, and optional **Apple iCloud / Google / School `.ics` calendars**, Google Public NTP, Captive Portal Wi-Fi setup with **on-screen QR codes**, automatic per-device MAC hostname & login, runtime timezone selector, and a full iPhone-friendly local Web UI.
+2. **Home Assistant Kids Clock** (`examples/leo-clock-ha.yaml`) — Native encrypted ESPHome API with HA weather, ISS, optional HA family/school calendars (`packages/ha_calendar_sensors.yaml`), time, and 4-phase circadian dimming.
 3. **Adult / Office Desk** (`examples/office-clock-energy-ha.yaml`) — Same live world map, solar terminator, night-side city lights & ISS tracker, with a **pluggable Band 3 dock** swapped out for live Home Assistant Solar / Load / Battery / Grid & Tariff telemetry (or any custom HA dock you build!).
+
+**Parent & Gift Box Guides:**
+- [**Parent Guide (`docs/PARENT_GUIDE.md`)**](docs/PARENT_GUIDE.md) — Plain-English guide to every Web UI setting, Apple iCloud / Google / School `.ics` calendars, `Countdown:` & `[no school]` tags, Weekend Lie-In, Tooth Fairy mode, and iPhone OTA updates.
+- [**Printable 1-Page Quick-Start Card (`docs/QUICK_START_CARD.md`)**](docs/QUICK_START_CARD.md) — Ready to print and pop inside a gift box!
 
 ---
 
@@ -20,19 +24,19 @@ Each phase can be enabled/disabled and customized independently (times, brightne
 | :---: | :---: |
 | ![4-Phase Circadian Cycle](docs/media/video_11_circadian_cycle.gif) | ![Evening Wind-Down Amber](docs/media/04_evening_winddown_amber.png) |
 
-| Deep Sleep Mode (Red + Real Lunar Phase) | Morning Quiet Play (Amber + Rising Sun) |
+| Deep Sleep Mode (Red + Real Lunar Phase & 5 Stars) | Morning Quiet Play (Amber + Rising Sun) |
 | :---: | :---: |
 | ![Deep Sleep Red](docs/media/05_deep_sleep_red.png) | ![Morning Quiet Play Amber](docs/media/06_morning_quiet_amber.png) |
 
-### Live Space Tracker, Weather, Units & Plug-and-Play Setup
-
-| Live ISS Orbit + Forward Projection & Night Lights | Fog Weather Icon + Imperial Units (`°F` / Miles) |
+| Tooth Fairy Tonight! (One-Tap Wind-Down Magic) | On-Screen Scannable QR Setup & Auto-Identity |
 | :---: | :---: |
-| ![Live ISS Orbit](docs/media/video_01_iss_orbit.gif) | ![Fog Weather and Imperial Units](docs/media/03_daytime_fog_imperial.png) |
+| ![Tooth Fairy Mode](docs/media/18_tooth_fairy_winddown.png) | ![Boot Screen with QR Code and Unique Login](docs/media/01_boot_splash.png) |
 
-| Multi-Device Auto-Identity Boot Screen (Zero Setup Card!) |
-| :---: |
-| ![Boot Screen with Unique Hostname and Login](docs/media/01_boot_splash.png) |
+### Live Space Tracker, Family/School Calendar & Units
+
+| Live ISS Orbit + Forward Projection & Night Lights | School/Family Calendar Routine + Fog + Imperial (`°F`) |
+| :---: | :---: |
+| ![Live ISS Orbit](docs/media/video_01_iss_orbit.gif) | ![School Calendar, Fog Weather and Imperial Units](docs/media/03_daytime_fog_imperial.png) |
 
 ### Automatic Seasonal & Special Occasions (Live Animations)
 Triggered automatically on the right dates (or previewed on-demand for 10 minutes before auto-reverting to `Auto`):
@@ -108,26 +112,31 @@ Multiple clocks in the same household can run the exact same `.bin` without coll
 ├── 3d-models/
 │   └── front-cover-extended-bezel-v2.stl  # Custom-fitted front cover STL (non-touch 5" LCD)
 ├── components/world_clock/       # Reusable C++ headers (auto-loaded locally OR via GitHub!)
-│   ├── clock_math.h              # 4-phase schedule, exact Easter, lunar phase, UTF-8, JSON helpers
+│   ├── clock_math.h              # 4-phase schedule, lie-in, stars, UK occasions, lunar phase, TZ
+│   ├── ics_parser.h              # Zero-allocation streaming RFC 5545 (.ics / webcal://) parser
 │   ├── world_map.h               # Continent grid, terminator, night lights, aurora, PSRAM flush
-│   ├── weather_dock.h            # Anti-aliased weather icons (incl. fog), lunar moon, holiday cards
-│   ├── sprite_engine.h           # 10fps dirty-rect sprite engine (ISS + forward arc, Santa, etc.)
-│   ├── net_worker.h              # Core 0 FreeRTOS HTTPS worker (Open-Meteo + ISS failover)
+│   ├── weather_dock.h            # Weather icons (incl. fog), lunar moon, 5 stars, Tooth Fairy
+│   ├── sprite_engine.h           # 10fps dirty-rect sprites (ISS, Santa, fairy dust, shooting stars)
+│   ├── net_worker.h              # Core 0 FreeRTOS HTTPS worker (Open-Meteo, ISS & .ics calendars)
 │   └── sim_time.h / time.py      # Deterministic controllable clock for headless host emulation
 ├── packages/
 │   ├── hardware_jc8048w550n.yaml # Board pins, PSRAM, 16-bit RGB LCD, 19.5kHz PWM backlight, OTA
 │   ├── fonts.yaml                # Fira Code v6.2.0 + Material Design Icons
-│   ├── ui_shell.yaml             # Band 1 (Header), Band 2 (Map), Top-Layer Boot/OTA Splash
+│   ├── ui_shell.yaml             # Band 1 (Header), Band 2 (Map), Top-Layer Splash + QR Code
 │   ├── dock_weather.yaml         # Pluggable Band 3: Weather + 3-Day Forecast + Sleep/Holiday Cards
 │   ├── dock_energy_ha.yaml       # Pluggable Band 3: 4-Tile Home Energy & Tariff Strip (HA)
 │   ├── ha_weather_sensors.yaml   # HA weather entity bindings (pair with dock_weather.yaml)
-│   ├── clock_core.yaml           # Shared globals, OTA splash, preview auto-revert, 10fps loop
-│   ├── backend_homeassistant.yaml# HA API, time, ISS & 1Hz schedule/header engine
-│   └── backend_standalone.yaml   # Core 0 NetWorker, Google NTP, Captive Portal & Web UI v3
+│   ├── ha_calendar_sensors.yaml  # Optional HA Family & School Calendar entity bindings
+│   ├── clock_core.yaml           # Shared globals, OTA splash, Shop Demo Mode, 10fps loop
+│   ├── backend_homeassistant.yaml# HA API, time, ISS, overrides & 1Hz routine/schedule engine
+│   └── backend_standalone.yaml   # Core 0 NetWorker, Google NTP, Captive Portal, QR & Web UI v3
 ├── examples/                     # Public, personal-info-free starter & universal release configs
 ├── sim/                          # Headless ESPHome host + SnapshotDisplay emulators (zero X11/SDL!)
 ├── scripts/run_emulator.py       # Compiles/runs emulators, builds PNG gallery & GIF/MP4 reels
-├── docs/media/                   # Web-ready PNG stills & optimized animated GIF previews
+├── docs/
+│   ├── PARENT_GUIDE.md           # Full plain-English parent & iCloud/Google/School Calendar guide
+│   ├── QUICK_START_CARD.md       # Printable 1-page gift-box quick-start card
+│   └── media/                    # Web-ready PNG stills & optimized animated GIF previews
 ├── .github/workflows/            # CI (tests + firmware builds + emulator media) & Release builds
 └── tests/test_clock_math.cpp     # Fast g++ unit tests for core C++ math
 ```

@@ -134,6 +134,13 @@ script:
           lv_obj_update_layout(lv_obj_get_parent(id(date_label)));
           lv_obj_align_to(id(loc_pill), id(date_label), LV_ALIGN_OUT_RIGHT_MID, 10, 0);
 
+          // Update sleep countdown stars for Wind-Down (3) & Deep Sleep (1)
+          if (slp == 1 || slp == 3) {
+            id(sleep_remaining_01) = world_clock::sleep_phase_remaining_01(now.hour * 60 + now.minute, slp, scfg, is_special_night, false);
+          } else {
+            id(sleep_remaining_01) = -1.0f;
+          }
+
           // Ticker message
           std::string tick = "CLASSIC WORLD DAY/NIGHT MAP";
           if (slp == 1) {
@@ -145,9 +152,13 @@ script:
               char sw[64];
               snprintf(sw, sizeof(sw), "SANTA \u2192 %s · GET READY FOR BED!", id(santa_city).c_str());
               tick = sw;
+            } else if (id(tooth_fairy_active)) {
+              tick = "SHHH... TOOTH FAIRY TONIGHT! · BED 7:30 PM";
             } else {
               tick = world_clock::expand_tokens("BEDTIME AT {bedtime} \u2192 GET READY FOR BED!", tctx);
             }
+          } else if (!id(cal_today_event).empty()) {
+            tick = "SCHOOL DAY · " + world_clock::to_upper_ascii(id(cal_today_event));
           } else if (mode == 1) {
             tick = "SPACE STATION (ISS) \u2192 OVER UK & EUROPE";
           } else if (mode == 2) {
@@ -226,13 +237,16 @@ script:
           id(sim_video_secs) = std::clamp(secs, 3, 60);
           ESP_LOGI("sim", "Configured video capture duration: %d seconds per animated mode", id(sim_video_secs));
 
-      # 01. Boot Splash Screen (MAC-derived multi-device URL & login discoverability)
+      # 01. Boot Splash Screen (MAC-derived multi-device URL, login & scannable QR code!)
       - lambda: |-
           lv_label_set_text(id(splash_kicker), "LEO'S WORLD & SPACE CLOCK");
           lv_label_set_text(id(splash_title), "CLOCK READY!");
           lv_label_set_text(id(splash_sub), "http://world-clock-a1b2c3.local/  ·  192.168.1.42");
-          lv_label_set_text(id(splash_hint), "Web Settings Login:  parent  /  clock-a1b2c3");
+          lv_label_set_text(id(splash_hint), "Scan QR or visit URL · Login: parent / clock-a1b2c3");
           lv_bar_set_value(id(splash_bar), 100, LV_ANIM_OFF);
+          const char *qr_u = "http://world-clock-a1b2c3.local/";
+          lv_qrcode_update(id(splash_qr), qr_u, strlen(qr_u));
+          lv_obj_remove_flag(id(splash_qr_box), LV_OBJ_FLAG_HIDDEN);
           lv_refr_now(nullptr);
       - delay: 200ms
       - snapshot.take: { id: main_display, filename: "01_boot_splash.bmp" }
@@ -280,7 +294,7 @@ script:
           filename: "video_01_iss_orbit.gif"
       - script.wait: sim_record_video
 
-      # 03. Daytime Fog Icon + Imperial Units (°F & Miles) (2026-11-12 08:45 GMT)
+      # 03. Daytime Fog Icon + Imperial Units (°F & Miles) + School/Family Calendar Headline! (2026-11-12 08:45 GMT)
       - lambda: |-
           id(iss_cur_lat) = 48.0f;
           id(iss_cur_lon) = 5.0f;
@@ -289,6 +303,7 @@ script:
           id(iss_fix_ms) = millis();
           id(use_fahrenheit) = true;
           id(use_miles) = true;
+          id(cal_today_event) = "Swimming Lesson (4 PM)";
           id(cur_wx_temp) = 6.5f;
           id(cur_wx_feels) = 4.0f;
           id(cur_wx_high) = 9.0f;
@@ -305,6 +320,7 @@ script:
       - lambda: |-
           id(use_fahrenheit) = false;
           id(use_miles) = false;
+          id(cal_today_event) = "";
           id(cur_wx_temp) = 9.2f;
           id(cur_wx_feels) = 7.8f;
           id(cur_wx_high) = 12.0f;
@@ -312,13 +328,25 @@ script:
           id(cur_wx_cond) = "partlycloudy";
           id(cur_wx_3day) = "FRI,cloudy,11,6|SAT,rainy,10,4|SUN,sunny,13,7";
 
-      # 04. Evening Wind-Down (Amber) — 2026-11-12 19:12 GMT
+      # 04. Evening Wind-Down (Amber + 5 Countdown Stars!) — 2026-11-12 19:12 GMT
       - lambda: |-
           id(clock_time).set_epoch(1794510720);
           id(force_redraw) = true;
       - script.execute: sim_flush
       - script.wait: sim_flush
       - snapshot.take: { id: main_display, filename: "04_evening_winddown_amber.bmp" }
+
+      # 04b. Tooth Fairy Tonight! (Amber Wind-Down + Golden Fairy Dust + Tooth Icon) — 2026-11-12 19:10 GMT
+      - lambda: |-
+          id(tooth_fairy_active) = true;
+          id(clock_time).set_epoch(1794510600);
+          id(force_redraw) = true;
+      - script.execute: sim_flush
+      - script.wait: sim_flush
+      - delay: 400ms
+      - lambda: 'lv_refr_now(nullptr);'
+      - snapshot.take: { id: main_display, filename: "18_tooth_fairy_winddown.bmp" }
+      - lambda: 'id(tooth_fairy_active) = false;'
 
       # 05. Deep Sleep Mode (Red + Real Lunar Phase) — 2026-11-21 02:15 GMT
       - lambda: |-

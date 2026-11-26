@@ -151,6 +151,9 @@ script:
           p.winddown_sub   = id(msg_winddown_sub_resolved);
           p.xmas_title  = id(msg_xmas_title_resolved);
           p.xmas_sub    = id(msg_xmas_sub_resolved);
+          p.sleep_remaining_01 = id(sleep_remaining_01);
+          p.tooth_fairy_mode   = id(tooth_fairy_active);
+          p.nap_active         = (id(nap_end_ms) != 0);
 
           world_clock::render_weather_dock_canvas(w, id(bg_cache), p);
 

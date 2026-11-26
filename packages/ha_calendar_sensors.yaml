@@ -1,0 +1,42 @@
+# Optional Home Assistant Calendar & School Routine Bindings
+# Add this package to any HA clock config alongside packages/backend_homeassistant.yaml
+# and set the 4 calendar_* substitutions to your Home Assistant template sensors (see README.md).
+
+text_sensor:
+  - platform: homeassistant
+    id: ha_cal_today
+    entity_id: "${calendar_today_entity}"
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(cal_today_event) = (x == "unknown" || x == "unavailable" || x == "none") ? "" : x;'
+
+  - platform: homeassistant
+    id: ha_cal_tomorrow
+    entity_id: "${calendar_tomorrow_entity}"
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(cal_tomorrow_event) = (x == "unknown" || x == "unavailable" || x == "none") ? "" : x;'
+
+  - platform: homeassistant
+    id: ha_cal_school_note
+    entity_id: "${calendar_school_note_entity}"
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            id(cal_school_configured) = true;
+            id(cal_school_note) = (x == "unknown" || x == "unavailable" || x == "none") ? "" : x;
+
+binary_sensor:
+  - platform: homeassistant
+    id: ha_cal_school_holiday
+    entity_id: "${calendar_school_holiday_entity}"
+    internal: true
+    on_state:
+      then:
+        - lambda: |-
+            id(cal_school_configured) = true;
+            id(cal_school_holiday) = x;
+            id(force_redraw) = true;

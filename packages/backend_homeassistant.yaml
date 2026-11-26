@@ -27,6 +27,98 @@ button:
   - platform: restart
     name: "Restart ${display_name}"
     entity_category: diagnostic
+  - platform: template
+    name: "Start Nap Mode Now"
+    on_press:
+      then:
+        - lambda: |-
+            uint32_t dur_ms = (uint32_t)std::clamp(id(ha_nap_minutes).state, 15.0f, 180.0f) * 60000UL;
+            id(nap_total_ms) = dur_ms;
+            id(nap_end_ms) = millis() + dur_ms;
+            if (id(nap_end_ms) == 0) id(nap_end_ms) = 1;
+            id(force_redraw) = true;
+  - platform: template
+    name: "Trigger Wind-Down Now"
+    on_press:
+      then:
+        - lambda: |-
+            auto now = id(clock_time).now();
+            id(nap_end_ms) = 0;
+            id(winddown_override_yday) = now.is_valid() ? now.day_of_year : 1;
+            id(force_redraw) = true;
+  - platform: template
+    name: "Cancel Nap or Wind-Down Override"
+    on_press:
+      then:
+        - lambda: |-
+            id(nap_end_ms) = 0;
+            id(winddown_override_yday) = -1;
+            id(force_redraw) = true;
+
+switch:
+  - platform: template
+    id: ha_demo_mode
+    name: "Shop & Fayre Demo Mode"
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+    on_turn_on:  { then: [ lambda: 'id(demo_mode_active) = true; id(demo_mode_idx) = 0;' ] }
+    on_turn_off:
+      then:
+        - lambda: 'id(demo_mode_active) = false;'
+        - select.set: { id: occasion_select, option: "Auto" }
+  - platform: template
+    id: ha_tooth_fairy
+    name: "Tooth Fairy Tonight!"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:  { then: [ lambda: 'id(tooth_fairy_active) = true; id(force_redraw) = true;' ] }
+    on_turn_off: { then: [ lambda: 'id(tooth_fairy_active) = false; id(force_redraw) = true;' ] }
+  - platform: template
+    id: ha_weekend_en
+    name: "Enable Weekend & School-Holiday Lie-In"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:  { then: [ lambda: 'id(force_redraw) = true;' ] }
+    on_turn_off: { then: [ lambda: 'id(force_redraw) = true;' ] }
+
+number:
+  - platform: template
+    id: ha_nap_minutes
+    name: "Nap Timer Duration"
+    min_value: 15
+    max_value: 180
+    step: 15
+    unit_of_measurement: "min"
+    optimistic: true
+    restore_value: true
+    initial_value: 60
+  - platform: template
+    id: ha_weekend_offset
+    name: "Weekend & Holiday Lie-In Offset"
+    min_value: 0
+    max_value: 90
+    step: 5
+    unit_of_measurement: "min"
+    optimistic: true
+    restore_value: true
+    initial_value: 60
+    on_value: { then: [ lambda: 'id(force_redraw) = true;' ] }
+
+text:
+  - platform: template
+    id: ha_parent_note
+    name: "Message of the Day"
+    mode: text
+    max_length: 44
+    optimistic: true
+    restore_value: false
+    initial_value: ""
+    on_value:
+      then:
+        - lambda: |-
+            auto now = id(clock_time).now();
+            id(parent_note_text) = x;
+            id(parent_note_yday) = now.is_valid() ? now.day_of_year : -1;
 
 text_sensor:
   - platform: version
@@ -234,27 +326,59 @@ interval:
           id(msg_xmas_title_resolved)     = world_clock::expand_tokens("${msg_xmas_title}", tctx);
           id(msg_xmas_sub_resolved)       = world_clock::expand_tokens("${msg_xmas_sub}", tctx);
 
-          // 3. 4-Phase Schedule + Automatic Holiday / Occasion Selection
+          // 3. 4-Phase Schedule (with Weekend/Holiday Lie-In, Nap/Wind-Down Overrides, Stars & Occasions)
           world_clock::ScheduleConfig scfg;
           scfg.winddown_enabled = ${winddown_enabled};
           scfg.sleep_enabled = ${sleep_enabled};
           scfg.quiet_enabled = ${quiet_enabled};
+          scfg.weekend_liein_enabled = id(ha_weekend_en).state;
           scfg.winddown_m = ${winddown_hour} * 60 + ${winddown_min};
           scfg.bedtime_m = ${bedtime_hour} * 60 + ${bedtime_min};
           scfg.quiet_m = ${quiet_play_hour} * 60 + ${quiet_play_min};
           scfg.wakeup_m = ${wakeup_hour} * 60 + ${wakeup_min};
           scfg.special_delay_m = ${special_night_delay_min};
+          scfg.weekend_offset_m = (int)roundf(std::isnan(id(ha_weekend_offset).state) ? 0.0f : id(ha_weekend_offset).state);
+
+          if (now.is_valid()) {
+            if (!id(parent_note_text).empty() && id(parent_note_yday) >= 0 && now.day_of_year != id(parent_note_yday)) {
+              id(parent_note_text).clear();
+              id(parent_note_yday) = -1;
+            }
+            if (id(tooth_fairy_active) && now.hour == 12 && now.minute == 0 && now.second < 3) {
+              id(tooth_fairy_active) = false;
+              id(ha_tooth_fairy).publish_state(false);
+            }
+            if (id(winddown_override_yday) >= 0 && now.day_of_year != id(winddown_override_yday)) {
+              id(winddown_override_yday) = -1;
+            }
+          }
+          if (id(nap_end_ms) != 0 && (int32_t)(now_ms - id(nap_end_ms)) >= 0) {
+            id(nap_end_ms) = 0;
+            id(force_redraw) = true;
+          }
+
+          int dow_now = now.is_valid() ? world_clock::ymd_dow_num(now.year, now.month, now.day_of_month) : 1;
+          bool is_weekend = (dow_now == 0 || dow_now == 6);
+          bool is_lie_in_day = is_weekend || id(cal_school_holiday);
+
+          int eff_q = world_clock::effective_quiet_m(scfg, is_lie_in_day);
+          int eff_w = world_clock::effective_wakeup_m(scfg, is_lie_in_day);
+          tctx.quiet  = world_clock::format_short_time(eff_q / 60, eff_q % 60, use24);
+          tctx.wakeup = world_clock::format_short_time(eff_w / 60, eff_w % 60, use24);
+          id(msg_sleep_title_resolved) = world_clock::expand_tokens("${msg_sleep_title}", tctx);
+          id(msg_quiet_title_resolved) = world_clock::expand_tokens("${msg_quiet_title}", tctx);
 
           std::string sel = id(occasion_select).current_option();
           uint8_t slp = 0;
           uint8_t mode = 1;
+          float rem_stars = -1.0f;
 
           if (sel == "Sleep Preview (Red)") {
-            slp = 1; mode = 0;
+            slp = 1; mode = 0; rem_stars = 0.65f;
           } else if (sel == "Quiet Play Preview (Amber)") {
             slp = 2; mode = 0;
           } else if (sel == "Wind-Down Preview (Amber)") {
-            slp = 3; mode = (now.is_valid() && now.month == 12 && now.day_of_month == 24) ? 4 : 0;
+            slp = 3; mode = (now.is_valid() && now.month == 12 && now.day_of_month == 24) ? 4 : 0; rem_stars = 0.75f;
           } else if (sel != "Auto") {
             slp = 0;
             if (sel == "Classic Map") mode = 0;
@@ -270,7 +394,22 @@ interval:
           } else if (now.is_valid()) {
             int m = now.month, d = now.day_of_month, yr = now.year;
             bool is_special_night = (m == 12 && (d == 24 || d == 31)) || (m == 11 && d == 5);
-            slp = world_clock::evaluate_schedule(now.hour * 60 + now.minute, scfg, is_special_night);
+            int cur_min = now.hour * 60 + now.minute;
+            slp = world_clock::evaluate_schedule(cur_min, scfg, is_special_night, is_lie_in_day);
+
+            if (id(nap_end_ms) != 0) {
+              slp = 1;
+              uint32_t rem_ms = (uint32_t)(id(nap_end_ms) - now_ms);
+              rem_stars = (id(nap_total_ms) > 0) ? std::clamp((float)rem_ms / (float)id(nap_total_ms), 0.0f, 1.0f) : 0.5f;
+            } else {
+              if (id(winddown_override_yday) == now.day_of_year) {
+                if (slp == 0) slp = 3;
+                else if (slp == 1) id(winddown_override_yday) = -1;
+              }
+              if (slp == 1 || slp == 3) {
+                rem_stars = world_clock::sleep_phase_remaining_01(cur_min, slp, scfg, is_special_night, is_lie_in_day);
+              }
+            }
 
             const bool kids_holidays = ${kids_holidays_enabled};
             if (${birthday_enabled} && m == ${default_birth_month} && d == ${default_birth_day}) mode = 2;
@@ -283,6 +422,7 @@ interval:
             else if (kids_holidays && world_clock::is_easter_window(yr, m, d)) mode = 6;
             else mode = ${iss_enabled} ? 1 : 0;
           }
+          id(sleep_remaining_01) = rem_stars;
 
           uint8_t pal = (slp == 1) ? 1 : ((slp == 2 || slp == 3) ? 2 : 0);
           bool mode_changed = (slp != id(sleep_phase)) || (mode != id(active_occasion));
@@ -414,10 +554,46 @@ interval:
           };
           uint8_t slp = id(sleep_phase);
           uint8_t m = id(active_occasion);
+          int dow_t = now.is_valid() ? world_clock::ymd_dow_num(now.year, now.month, now.day_of_month) : 1;
+          bool is_wknd = (dow_t == 0 || dow_t == 6);
+          bool alt_slot = now.is_valid() && (((now.second / 12) % 2) == 0);
           std::string tick = "CLASSIC WORLD DAY/NIGHT MAP";
 
+          std::string routine_line;
+          if (!id(parent_note_text).empty()) {
+            routine_line = "NOTE  \u2192  " + world_clock::to_upper_ascii(id(parent_note_text));
+          } else if (now.is_valid()) {
+            std::string sch_tag;
+            if (id(cal_school_configured)) {
+              if (id(cal_school_holiday)) {
+                sch_tag = id(cal_school_note).empty() ? "NO SCHOOL (HOLIDAY)" : ("NO SCHOOL · " + world_clock::to_upper_ascii(id(cal_school_note)));
+              } else if (is_wknd) {
+                sch_tag = "WEEKEND · NO SCHOOL";
+              } else {
+                sch_tag = "SCHOOL DAY";
+              }
+            }
+            if (!id(cal_today_event).empty()) {
+              std::string ev = world_clock::to_upper_ascii(id(cal_today_event));
+              routine_line = sch_tag.empty() ? ("TODAY  \u2192  " + ev) : (sch_tag + " · " + ev);
+            } else if (!sch_tag.empty() && now.hour < 15) {
+              routine_line = sch_tag;
+            } else if (!id(cal_tomorrow_event).empty() && now.hour >= 15) {
+              routine_line = "TOMORROW  \u2192  " + world_clock::to_upper_ascii(id(cal_tomorrow_event));
+            } else if (${kids_holidays_enabled}) {
+              if (world_clock::is_pancake_day(now.year, now.month, now.day_of_month)) routine_line = "HAPPY PANCAKE DAY!";
+              else if (world_clock::is_uk_mothers_day(now.year, now.month, now.day_of_month)) routine_line = "HAPPY MOTHER'S DAY!";
+              else if (world_clock::is_fathers_day(now.year, now.month, now.day_of_month)) routine_line = "HAPPY FATHER'S DAY!";
+              else if (world_clock::is_world_book_day(now.year, now.month, now.day_of_month)) routine_line = "HAPPY WORLD BOOK DAY!";
+              else if (world_clock::is_meteor_shower(now.month, now.day_of_month)) routine_line = "METEOR SHOWER TONIGHT · WATCH THE SKY!";
+              else if (world_clock::solstice_kind(now.month, now.day_of_month) == 1) routine_line = "SUMMER SOLSTICE · LONGEST DAY OF THE YEAR!";
+              else if (world_clock::solstice_kind(now.month, now.day_of_month) == 2) routine_line = "WINTER SOLSTICE · SHORTEST DAY OF THE YEAR!";
+            }
+          }
+
           if (slp == 1) {
-            tick = world_clock::expand_tokens("${msg_sleep_tick}", tctx);
+            tick = (id(nap_end_ms) != 0) ? "NAP TIME  ·  QUIET REST UNTIL STARS FADE"
+                                         : world_clock::expand_tokens("${msg_sleep_tick}", tctx);
           } else if (slp == 2) {
             tick = world_clock::expand_tokens("${msg_quiet_tick}", tctx);
           } else if (slp == 3) {
@@ -425,12 +601,18 @@ interval:
               char sw[64];
               snprintf(sw, sizeof(sw), "SANTA \u2192 %s · GET READY FOR BED!", id(santa_city).c_str());
               tick = sw;
+            } else if (id(tooth_fairy_active)) {
+              tick = "SHHH... TOOTH FAIRY TONIGHT! · BED " + tctx.bedtime;
+            } else if (alt_slot && !id(cal_tomorrow_event).empty()) {
+              tick = "TOMORROW \u2192 " + world_clock::to_upper_ascii(id(cal_tomorrow_event));
             } else {
               tick = world_clock::expand_tokens("${msg_winddown_tick}", tctx);
             }
+          } else if (!id(parent_note_text).empty()) {
+            tick = routine_line;
           } else if (m == 1) {
             if (!id(iss_has_fix)) {
-              tick = "ISS RADAR  \u2192  SYNCING LIVE ORBITAL FEED...";
+              tick = routine_line.empty() ? "ISS RADAR  \u2192  SYNCING LIVE ORBITAL FEED..." : routine_line;
             } else {
               float ilat = id(iss_cur_lat), ilon = id(iss_cur_lon);
               float dist_iss = world_clock::haversine_km(id(active_lat), id(active_lon), ilat, ilon);
@@ -450,7 +632,9 @@ interval:
               int now_m = now.is_valid() ? (now.hour * 60 + now.minute) : -999;
               int wake_m = ${wakeup_hour} * 60 + ${wakeup_min};
               if (dist_iss < 900.0f) {
-                tick = std::string("ISS FLYOVER NEAR ") + loc + " RIGHT NOW!";
+                tick = std::string("ISS OVERHEAD NEAR ") + loc + "! WAVE AT ASTRONAUTS!";
+              } else if (alt_slot && !routine_line.empty()) {
+                tick = routine_line;
               } else if (${morning_greeting_enabled} && now.is_valid() && now_m >= wake_m && now_m < wake_m + 45) {
                 tick = world_clock::expand_tokens("${msg_wake_tick}", tctx) + " · ISS \u2192 " + reg;
               } else if (${birthday_enabled} && now.is_valid() && now.month == ${default_birth_month} && now.day_of_month < ${default_birth_day}) {

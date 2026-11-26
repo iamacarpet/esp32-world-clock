@@ -42,6 +42,9 @@ struct WeatherDockParams {
   std::string winddown_sub;
   std::string xmas_title;
   std::string xmas_sub;
+  float sleep_remaining_01{-1.0f};  // 0..1 remaining fraction -> draws 5 countdown stars
+  bool tooth_fairy_mode{false};
+  bool nap_active{false};
 };
 
 inline int map_wx_code(std::string s) {
@@ -297,6 +300,30 @@ inline void render_weather_dock_canvas(const WeatherDockWidgets &w, uint8_t *&bg
       pad_disc(55.5f, 33.5f, 2.5f, 255.0f, 30.0f, 35.0f, 1.0f);
     };
 
+    auto draw_countdown_stars = [&](float rem01, uint8_t lr, uint8_t lg, uint8_t lb,
+                                    uint8_t dr, uint8_t dg, uint8_t db) {
+      if (rem01 < 0.0f) return;
+      int lit_n = std::clamp((int)ceilf(rem01 * 5.0f), 1, 5);
+      if (rem01 <= 0.01f) lit_n = 0;
+      for (int si = 0; si < 5; si++) {
+        int sx = 724 + si * 15;
+        int sy = 24;
+        bool lit = (si < lit_n);
+        uint8_t sr = lit ? lr : dr, sg = lit ? lg : dg, sb = lit ? lb : db;
+        // 4-point glowing star glyph
+        for (int dy = -5; dy <= 5; dy++) {
+          for (int dx = -5; dx <= 5; dx++) {
+            float ax = fabsf((float)dx), ay = fabsf((float)dy);
+            float d_star = (ax + ay <= 4.6f && (ax <= 1.4f || ay <= 1.4f || ax + ay <= 2.5f)) ? 1.0f : 0.0f;
+            if (d_star > 0.0f) {
+              float fall = std::clamp(1.0f - (ax + ay) / 6.2f, 0.35f, 1.0f);
+              put_px(sx + dx, sy + dy, (uint8_t)(sr * fall), (uint8_t)(sg * fall), (uint8_t)(sb * fall));
+            }
+          }
+        }
+      }
+    };
+
     if (slp == 1) {
       // Deep Sleep: Real Lunar Phase Moon!
       pad_disc(32.0f, 32.0f, 18.0f, 185.0f, 16.0f, 22.0f, 0.22f);
@@ -326,8 +353,14 @@ inline void render_weather_dock_canvas(const WeatherDockWidgets &w, uint8_t *&bg
       }
       pad_disc(15.0f, 18.0f, 1.9f, 240.0f, 40.0f, 45.0f, 0.90f);
       pad_disc(48.0f, 46.0f, 1.5f, 240.0f, 40.0f, 45.0f, 0.85f);
-      if (w.card_title != nullptr) lv_label_set_text(w.card_title, p.sleep_title.c_str());
-      if (w.card_sub != nullptr) lv_label_set_text(w.card_sub, p.sleep_sub.c_str());
+      if (p.nap_active) {
+        if (w.card_title != nullptr) lv_label_set_text(w.card_title, "NAP TIME · RESTING");
+        if (w.card_sub != nullptr) lv_label_set_text(w.card_sub, "Quiet rest until stars fade!");
+      } else {
+        if (w.card_title != nullptr) lv_label_set_text(w.card_title, p.sleep_title.c_str());
+        if (w.card_sub != nullptr) lv_label_set_text(w.card_sub, p.sleep_sub.c_str());
+      }
+      draw_countdown_stars(p.sleep_remaining_01, 235, 32, 38, 52, 8, 12);
     } else if (slp == 2) {
       // Morning Quiet Play: Rising Sun over Horizon
       pad_disc(32.0f, 38.0f, 19.0f, 255.0f, 130.0f, 15.0f, 0.25f);
@@ -338,12 +371,25 @@ inline void render_weather_dock_canvas(const WeatherDockWidgets &w, uint8_t *&bg
       if (w.card_title != nullptr) lv_label_set_text(w.card_title, p.quiet_title.c_str());
       if (w.card_sub != nullptr) lv_label_set_text(w.card_sub, p.quiet_sub.c_str());
     } else if (slp == 3) {
-      // Evening Wind-Down ("Get Ready for Bed"): Santa sleigh on Xmas Eve, else cozy sunset + bedtime stars!
+      // Evening Wind-Down ("Get Ready for Bed"): Santa on Xmas Eve, Tooth Fairy if active, else cozy dusk!
       if (mode == 4 && p.keep_santa_winddown) {
         draw_santa_icon();
         std::string st_hdr = (p.santa_wp_idx < 0) ? "SANTA PREP · BEDTIME SOON!" : (std::string("SANTA \u2192 ") + p.santa_city);
         if (w.card_title != nullptr) lv_label_set_text(w.card_title, st_hdr.c_str());
         if (w.card_sub != nullptr) lv_label_set_text(w.card_sub, p.winddown_sub.c_str());
+      } else if (p.tooth_fairy_mode) {
+        // Cute sparkling tooth + golden fairy dust
+        pad_disc(32.0f, 32.0f, 19.0f, 255.0f, 170.0f, 45.0f, 0.20f);
+        pad_disc(26.0f, 28.0f, 8.0f, 255.0f, 215.0f, 145.0f, 1.0f);
+        pad_disc(38.0f, 28.0f, 8.0f, 255.0f, 215.0f, 145.0f, 1.0f);
+        pad_box(20, 29, 44, 38, 255, 215, 145);
+        pad_disc(26.0f, 42.0f, 5.2f, 255.0f, 215.0f, 145.0f, 1.0f);
+        pad_disc(38.0f, 42.0f, 5.2f, 255.0f, 215.0f, 145.0f, 1.0f);
+        pad_disc(15.0f, 17.0f, 2.2f, 255.0f, 195.0f, 60.0f, 1.0f);
+        pad_disc(49.0f, 19.0f, 2.4f, 255.0f, 225.0f, 90.0f, 1.0f);
+        pad_disc(48.0f, 45.0f, 1.8f, 255.0f, 175.0f, 45.0f, 0.9f);
+        if (w.card_title != nullptr) lv_label_set_text(w.card_title, "TOOTH FAIRY TONIGHT!");
+        if (w.card_sub != nullptr) lv_label_set_text(w.card_sub, "Pop your tooth under the pillow!");
       } else {
         // Setting dusk sun + twilight crescent & stars (distinct from morning sunrise!)
         pad_disc(26.0f, 42.0f, 16.0f, 255.0f, 105.0f, 15.0f, 0.24f);
@@ -359,6 +405,7 @@ inline void render_weather_dock_canvas(const WeatherDockWidgets &w, uint8_t *&bg
         if (w.card_title != nullptr) lv_label_set_text(w.card_title, p.winddown_title.c_str());
         if (w.card_sub != nullptr) lv_label_set_text(w.card_sub, p.winddown_sub.c_str());
       }
+      draw_countdown_stars(p.sleep_remaining_01, 255, 165, 38, 65, 32, 8);
     } else if (mode == 2) {
       pad_box(14, 38, 50, 52, 235, 135, 55);
       pad_box(14, 38, 50, 42, 255, 95, 155);

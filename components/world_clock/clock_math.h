@@ -8,6 +8,10 @@
 #include <cstring>
 #include <string>
 
+#ifdef USE_TIME_TIMEZONE
+#include "esphome/components/time/posix_tz.h"
+#endif
+
 namespace world_clock {
 
 // Circadian sleep phases:
@@ -16,101 +20,191 @@ struct ScheduleConfig {
   bool winddown_enabled{true};
   bool sleep_enabled{true};
   bool quiet_enabled{true};
+  bool weekend_liein_enabled{false};
   int winddown_m{19 * 60};       // 19:00
   int bedtime_m{19 * 60 + 30};   // 19:30
-  int quiet_m{4 * 60};           // 04:00
-  int wakeup_m{6 * 60};          // 06:00
-  int special_delay_m{0};        // Optional delay on Xmas Eve / NYE / Bonfire Night
+  int quiet_m{5 * 60};           // 05:00
+  int wakeup_m{6 * 60 + 30};     // 06:30
+  int special_delay_m{0};        // Optional bedtime shift on Xmas Eve / NYE / Bonfire Night
+  int weekend_offset_m{0};       // Optional lie-in shift (0..90 min) on Sat/Sun & School Holidays
 };
 
-inline int wrap_minutes(int m) {
-  m %= 1440;
-  return (m < 0) ? (m + 1440) : m;
+// Exact Gregorian calendar -> Julian Day Number (valid for all Gregorian dates).
+inline int64_t ymd_to_jdn(int y, int m, int d) {
+  int a = (14 - m) / 12;
+  int yy = y + 4800 - a;
+  int mm = m + 12 * a - 3;
+  return (int64_t)d + (153 * mm + 2) / 5 + 365LL * yy + yy / 4 - yy / 100 + yy / 400 - 32045;
 }
 
-inline bool in_window(int cur, int start, int end) {
-  start = wrap_minutes(start);
-  end = wrap_minutes(end);
-  cur = wrap_minutes(cur);
-  if (start == end) return false;
-  return (start < end) ? (cur >= start && cur < end) : (cur >= start || cur < end);
+inline int days_between_ymd(int y1, int m1, int d1, int y2, int m2, int d2) {
+  return (int)(ymd_to_jdn(y2, m2, d2) - ymd_to_jdn(y1, m1, d1));
 }
 
-// Evaluates the 4-phase circadian schedule safely across midnight and disabled phases.
-inline uint8_t evaluate_schedule(int mins, const ScheduleConfig &cfg, bool is_special_night) {
-  const int delay = is_special_night ? std::clamp(cfg.special_delay_m, 0, 180) : 0;
-  const int wd_m = wrap_minutes(cfg.winddown_m + delay);
-  const int bed_m = wrap_minutes(cfg.bedtime_m + delay);
-  const int quiet_m = wrap_minutes(cfg.quiet_m);
-  const int wake_m = wrap_minutes(cfg.wakeup_m);
+// Day of week: 0=SUN, 1=MON, ..., 6=SAT
+inline int ymd_dow_num(int y, int m, int d) {
+  static const int t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+  if (m < 1 || m > 12 || d < 1 || d > 31) return 1;
+  if (m < 3) y -= 1;
+  int w = (y + y / 4 - y / 100 + y / 400 + t[m - 1] + d) % 7;
+  return (w + 7) % 7;
+}
 
-  // Determine the effective end of deep sleep (quiet_m if quiet play enabled, else wake_m)
-  const int sleep_end = cfg.quiet_enabled ? quiet_m : wake_m;
+inline bool is_in_circular_range(int now_m, int start_m, int end_m) {
+  start_m = ((start_m % 1440) + 1440) % 1440;
+  end_m = ((end_m % 1440) + 1440) % 1440;
+  if (start_m == end_m) return false;
+  if (start_m < end_m) return (now_m >= start_m && now_m < end_m);
+  return (now_m >= start_m || now_m < end_m);
+}
 
-  // 1. Deep Sleep takes precedence over evening wind-down once bedtime arrives
-  if (cfg.sleep_enabled && in_window(mins, bed_m, sleep_end)) {
-    return 1;
+inline int circular_minutes_between(int start_m, int end_m) {
+  start_m = ((start_m % 1440) + 1440) % 1440;
+  end_m = ((end_m % 1440) + 1440) % 1440;
+  int diff = end_m - start_m;
+  if (diff <= 0) diff += 1440;
+  return diff;
+}
+
+inline int effective_quiet_m(const ScheduleConfig &cfg, bool is_lie_in_day) {
+  int shift = (is_lie_in_day && cfg.weekend_liein_enabled) ? std::clamp(cfg.weekend_offset_m, 0, 120) : 0;
+  return (cfg.quiet_m + shift) % 1440;
+}
+
+inline int effective_wakeup_m(const ScheduleConfig &cfg, bool is_lie_in_day) {
+  int shift = (is_lie_in_day && cfg.weekend_liein_enabled) ? std::clamp(cfg.weekend_offset_m, 0, 120) : 0;
+  return (cfg.wakeup_m + shift) % 1440;
+}
+
+// Evaluates the 4-phase circadian schedule, gracefully handling midnight wrap,
+// disabled individual phases, optional special-night delay, and weekend/holiday lie-in.
+inline uint8_t evaluate_schedule(int now_m, const ScheduleConfig &cfg, bool is_special_night,
+                                 bool is_lie_in_day = false) {
+  now_m = ((now_m % 1440) + 1440) % 1440;
+  int delay = is_special_night ? std::clamp(cfg.special_delay_m, 0, 180) : 0;
+  int wd_start = (cfg.winddown_m + delay) % 1440;
+  int bed_start = (cfg.bedtime_m + delay) % 1440;
+  int quiet_start = effective_quiet_m(cfg, is_lie_in_day);
+  int wake_end = effective_wakeup_m(cfg, is_lie_in_day);
+
+  if (cfg.winddown_enabled && is_in_circular_range(now_m, wd_start, bed_start)) {
+    return 3;  // Evening Wind-Down (Amber)
   }
-  // 2. Morning Quiet Play (between quiet_m and wake_m)
-  if (cfg.quiet_enabled && in_window(mins, quiet_m, wake_m)) {
-    return 2;
-  }
-  // 3. Evening Wind-Down ("Get Ready for Bed")
-  if (cfg.winddown_enabled) {
-    const int wd_end = cfg.sleep_enabled ? bed_m : sleep_end;
-    if (in_window(mins, wd_m, wd_end)) {
-      return 3;
+
+  if (cfg.sleep_enabled) {
+    int sleep_end = cfg.quiet_enabled ? quiet_start : wake_end;
+    if (is_in_circular_range(now_m, bed_start, sleep_end)) {
+      return 1;  // Deep Sleep (Red)
     }
   }
-  return 0;
+
+  if (cfg.quiet_enabled && is_in_circular_range(now_m, quiet_start, wake_end)) {
+    return 2;  // Morning Quiet Play (Amber)
+  }
+
+  return 0;  // Daytime
 }
 
-// Exact Anonymous Gregorian Easter algorithm + March/April calendar boundary check (+/- 1 day).
-inline void compute_easter_date(int yr, int &out_month, int &out_day) {
-  int a = yr % 19;
-  int b = yr / 100;
-  int c = yr % 100;
-  int d_e = b / 4;
+// Computes remaining fraction (0.0 .. 1.0) in the active Sleep (1) or Wind-Down (3) phase
+// so 1..5 glowing countdown stars gently fade out as bedtime or morning approaches!
+inline float sleep_phase_remaining_01(int now_m, uint8_t phase, const ScheduleConfig &cfg,
+                                      bool is_special_night, bool is_lie_in_day = false) {
+  now_m = ((now_m % 1440) + 1440) % 1440;
+  int delay = is_special_night ? std::clamp(cfg.special_delay_m, 0, 180) : 0;
+  int start_m = 0;
+  int end_m = 0;
+  if (phase == 3) {
+    start_m = (cfg.winddown_m + delay) % 1440;
+    end_m = (cfg.bedtime_m + delay) % 1440;
+  } else if (phase == 1) {
+    start_m = (cfg.bedtime_m + delay) % 1440;
+    end_m = cfg.quiet_enabled ? effective_quiet_m(cfg, is_lie_in_day) : effective_wakeup_m(cfg, is_lie_in_day);
+  } else {
+    return 0.0f;
+  }
+  int total = circular_minutes_between(start_m, end_m);
+  if (total <= 0) return 0.0f;
+  int elapsed = circular_minutes_between(start_m, now_m);
+  if (now_m == start_m) elapsed = 0;
+  if (elapsed >= total) return 0.0f;
+  return std::clamp(1.0f - (float)elapsed / (float)total, 0.0f, 1.0f);
+}
+
+// Exact Anonymous Gregorian (Meeus/Jones/Butcher) Easter Sunday date.
+inline void easter_sunday_ymd(int y, int &m, int &d) {
+  int a = y % 19;
+  int b = y / 100;
+  int c = y % 100;
+  int d_ = b / 4;
   int e = b % 4;
   int f = (b + 8) / 25;
   int g = (b - f + 1) / 3;
-  int h = (19 * a + b - d_e - g + 15) % 30;
+  int h = (19 * a + b - d_ - g + 15) % 30;
   int i = c / 4;
   int k = c % 4;
   int l = (32 + 2 * e + 2 * i - h - k) % 7;
-  int m_e = (a + 11 * h + 22 * l) / 451;
-  out_month = (h + l - 7 * m_e + 114) / 31;
-  out_day = ((h + l - 7 * m_e + 114) % 31) + 1;
+  int mm = (a + 11 * h + 22 * l) / 451;
+  m = (h + l - 7 * mm + 114) / 31;
+  d = ((h + l - 7 * mm + 114) % 31) + 1;
 }
 
-inline bool is_easter_window(int yr, int month, int day) {
-  int emon = 0, eday = 0;
-  compute_easter_date(yr, emon, eday);
-  auto mar_apr_day = [](int mo, int dy) -> int {
-    return (mo == 3) ? dy : ((mo == 4) ? (31 + dy) : -99);
-  };
-  int d_now = mar_apr_day(month, day);
-  int d_eas = mar_apr_day(emon, eday);
-  return (d_now > 0 && d_eas > 0 && std::abs(d_now - d_eas) <= 1);
+// Easter Egg Hunt window: Good Friday through Easter Monday inclusive (-2 .. +1 days around Easter Sunday).
+inline bool is_easter_window(int y, int m, int d) {
+  int em = 4, ed = 1;
+  easter_sunday_ymd(y, em, ed);
+  int diff = days_between_ymd(y, em, ed, y, m, d);
+  return (diff >= -2 && diff <= 1);
 }
 
-// Lunar phase in [0.0, 1.0): 0.0 = New Moon, 0.25 = First Quarter, 0.5 = Full Moon, 0.75 = Last Quarter.
-inline float lunar_phase_01(int year, int month, int day) {
-  // Julian Day Number at 12:00 UTC
-  int a = (14 - month) / 12;
-  int y = year + 4800 - a;
-  int m = month + 12 * a - 3;
-  int jdn = day + (153 * m + 2) / 5 + 365 * y + y / 4 - y / 100 + y / 400 - 32045;
-  // Reference New Moon: 2000-01-06 18:14 UTC (JD 2451550.26)
-  double days_since = (double)jdn - 2451550.26;
-  double cycles = days_since / 29.530588853;
-  double phase = cycles - std::floor(cycles);
-  if (phase < 0.0) phase += 1.0;
-  return (float)phase;
+// Shrove Tuesday / Pancake Day = Easter Sunday - 47 days.
+inline bool is_pancake_day(int y, int m, int d) {
+  int em = 4, ed = 1;
+  easter_sunday_ymd(y, em, ed);
+  return days_between_ymd(y, em, ed, y, m, d) == -47;
 }
 
-// Format hour:minute as compact 12h ("4 AM", "7:30 PM") or 24h ("04:00", "19:30").
+// UK Mother's Day (Mothering Sunday) = Easter Sunday - 21 days.
+inline bool is_uk_mothers_day(int y, int m, int d) {
+  int em = 4, ed = 1;
+  easter_sunday_ymd(y, em, ed);
+  return days_between_ymd(y, em, ed, y, m, d) == -21;
+}
+
+// Father's Day (UK/US/CA) = 3rd Sunday of June.
+inline bool is_fathers_day(int y, int m, int d) {
+  return (m == 6 && d >= 15 && d <= 21 && ymd_dow_num(y, m, d) == 0);
+}
+
+// World Book Day (UK/Ireland) = 1st Thursday of March.
+inline bool is_world_book_day(int y, int m, int d) {
+  return (m == 3 && d >= 1 && d <= 7 && ymd_dow_num(y, m, d) == 4);
+}
+
+// Peak annual meteor showers (Perseids Aug 11-13, Geminids Dec 13-14).
+inline bool is_meteor_shower(int m, int d) {
+  return (m == 8 && d >= 11 && d <= 13) || (m == 12 && (d == 13 || d == 14));
+}
+
+// Astronomical Solstices (Northern hemisphere longest/shortest day).
+inline int solstice_kind(int m, int d) {
+  if (m == 6 && (d == 20 || d == 21)) return 1;   // Summer Solstice
+  if (m == 12 && (d == 21 || d == 22)) return 2;  // Winter Solstice
+  return 0;
+}
+
+// Synodic lunar phase in [0.0, 1.0): 0.0=New Moon, 0.25=First Quarter, 0.50=Full Moon, 0.75=Last Quarter.
+inline float lunar_phase_01(int y, int m, int d) {
+  int64_t jdn = ymd_to_jdn(y, m, d);
+  double days_since_new = (double)jdn - 2451550.25972;
+  double cycles = days_since_new / 29.53058867;
+  double frac = cycles - floor(cycles);
+  if (frac < 0.0) frac += 1.0;
+  return (float)frac;
+}
+
 inline std::string format_short_time(int hour, int minute, bool use_24h) {
+  hour = ((hour % 24) + 24) % 24;
+  minute = ((minute % 60) + 60) % 60;
   char buf[16];
   if (use_24h) {
     snprintf(buf, sizeof(buf), "%02d:%02d", hour, minute);
@@ -124,17 +218,7 @@ inline std::string format_short_time(int hour, int minute, bool use_24h) {
       snprintf(buf, sizeof(buf), "%d:%02d %s", h12, minute, ap);
     }
   }
-  return std::string(buf);
-}
-
-inline void replace_all(std::string &s, const char *from, const std::string &to) {
-  size_t from_len = strlen(from);
-  if (from_len == 0) return;
-  size_t pos = 0;
-  while ((pos = s.find(from, pos)) != std::string::npos) {
-    s.replace(pos, from_len, to);
-    pos += to.size();
-  }
+  return buf;
 }
 
 struct TokenContext {
@@ -145,38 +229,73 @@ struct TokenContext {
   std::string wakeup;
 };
 
-inline std::string expand_tokens(std::string s, const TokenContext &ctx) {
-  replace_all(s, "{name}", ctx.name);
-  replace_all(s, "{winddown}", ctx.winddown);
-  replace_all(s, "{bedtime}", ctx.bedtime);
-  replace_all(s, "{quiet}", ctx.quiet);
-  replace_all(s, "{wakeup}", ctx.wakeup);
+inline void replace_all(std::string &s, const char *needle, const std::string &val) {
+  size_t nlen = strlen(needle);
+  if (nlen == 0) return;
+  size_t pos = 0;
+  while ((pos = s.find(needle, pos)) != std::string::npos) {
+    s.replace(pos, nlen, val);
+    pos += val.size();
+  }
+}
+
+inline std::string expand_tokens(std::string tmpl, const TokenContext &ctx) {
+  replace_all(tmpl, "{name}", ctx.name);
+  replace_all(tmpl, "{winddown}", ctx.winddown);
+  replace_all(tmpl, "{bedtime}", ctx.bedtime);
+  replace_all(tmpl, "{quiet}", ctx.quiet);
+  replace_all(tmpl, "{wakeup}", ctx.wakeup);
+  return tmpl;
+}
+
+inline std::string to_upper_ascii(std::string s) {
+  for (char &c : s) {
+    if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+  }
   return s;
 }
 
-// UTF-8 safe truncation to at most `max_cp` Unicode codepoints (never splits multi-byte chars).
+// UTF-8 safe truncation by Unicode codepoint count (never splits multi-byte sequences).
 inline void utf8_truncate_codepoints(std::string &s, size_t max_cp) {
   size_t cp = 0;
-  for (size_t i = 0; i < s.size(); i++) {
-    if (((unsigned char)s[i] & 0xC0U) != 0x80U) {
+  size_t i = 0;
+  while (i < s.size()) {
+    if (((unsigned char)s[i] & 0xC0) != 0x80) {
       if (cp == max_cp) {
         s.resize(i);
         return;
       }
       cp++;
     }
+    i++;
   }
 }
 
-inline std::string to_upper_ascii(std::string s) {
-  for (char &ch : s) ch = (char)toupper((unsigned char)ch);
-  return s;
-}
-
+// Temperature & distance unit conversions
 inline float c_to_f(float c) { return c * 1.8f + 32.0f; }
 inline int km_to_mi(int km) { return (int)roundf((float)km * 0.621371f); }
 
-// --- Lightweight JSON & Weather Helpers (shared by NetWorker + unit tests) ---
+// Miller cylindrical projection (maps world lat/lon -> 800x322 canvas pixels).
+inline void latlon_to_map_xy(float lat_d, float lon_d, float &ox, float &oy) {
+  constexpr float kDeg2Rad = (float)M_PI / 180.0f;
+  constexpr float kYTopM = 1.6637572f;
+  constexpr float kYSpanM = 2.6869962f;
+  float lc = std::clamp(lat_d, -85.0f, 85.0f) * kDeg2Rad;
+  float ym = 1.25f * logf(tanf(0.7853982f + 0.4f * lc));
+  ox = 10.0f + (lon_d + 167.0f) * (781.0f / 345.0f);
+  oy = 11.0f + ((kYTopM - ym) / kYSpanM) * 288.0f;
+}
+
+inline float haversine_km(float lat1, float lon1, float lat2, float lon2) {
+  constexpr float kD2R = 0.0174532925f;
+  float dlat = (lat2 - lat1) * kD2R;
+  float dlon = (lon2 - lon1) * kD2R;
+  float a = sinf(dlat * 0.5f) * sinf(dlat * 0.5f) +
+            cosf(lat1 * kD2R) * cosf(lat2 * kD2R) * sinf(dlon * 0.5f) * sinf(dlon * 0.5f);
+  return 6371.0f * 2.0f * atan2f(sqrtf(a), sqrtf(std::max(0.0f, 1.0f - a)));
+}
+
+// Lightweight JSON & Open-Meteo parsing helpers (zero heap allocations).
 inline bool extract_json_num(const char *src, const char *key, float &out_v) {
   if (src == nullptr || key == nullptr) return false;
   const char *p = strstr(src, key);
@@ -220,32 +339,59 @@ inline const char *wmo_to_cond(int wmo, bool is_day) {
 }
 
 inline const char *ymd_to_dow(int y, int m, int d) {
-  static const char *kDays[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
-  static const int t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+  static const char *const kDays[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
   if (m < 1 || m > 12 || d < 1 || d > 31) return "DAY";
-  if (m < 3) y -= 1;
-  int w = (y + y / 4 - y / 100 + y / 400 + t[m - 1] + d) % 7;
-  return kDays[(w + 7) % 7];
+  return kDays[ymd_dow_num(y, m, d)];
 }
 
-// Miller cylindrical map projection matching the 72x33 continent dot grid (800x322 canvas).
-inline void latlon_to_map_xy(float lat_d, float lon_d, float &ox, float &oy) {
-  constexpr float kDeg2Rad = (float)M_PI / 180.0f;
-  constexpr float kYTopM = 1.6637572f;
-  constexpr float kYSpanM = 2.6869962f;
-  float lc = std::clamp(lat_d, -85.0f, 85.0f) * kDeg2Rad;
-  float ym = 1.25f * logf(tanf(0.7853982f + 0.4f * lc));
-  ox = 10.0f + (lon_d + 167.0f) * (781.0f / 345.0f);
-  oy = 11.0f + ((kYTopM - ym) / kYSpanM) * 288.0f;
-}
+#ifdef USE_TIME_TIMEZONE
+// Runtime timezone switcher for the universal pre-built standalone firmware!
+// Note: POSIX std_offset_seconds is positive WEST of UTC (e.g. US Eastern = +5*3600).
+inline bool apply_named_timezone(const std::string &name) {
+  using namespace esphome::time;
+  ParsedTimezone tz{};
+  auto mwd = [](uint8_t mon, uint8_t wk, uint8_t dow, int32_t sec) -> DSTRule {
+    DSTRule r{};
+    r.time_seconds = sec;
+    r.type = DSTRuleType::MONTH_WEEK_DAY;
+    r.month = mon;
+    r.week = wk;
+    r.day_of_week = dow;
+    return r;
+  };
+  DSTRule none{};
+  none.type = DSTRuleType::NONE;
 
-inline float haversine_km(float lat1, float lon1, float lat2, float lon2) {
-  constexpr float kDeg2Rad = (float)M_PI / 180.0f;
-  float dlat = (lat2 - lat1) * kDeg2Rad;
-  float dlon = (lon2 - lon1) * kDeg2Rad;
-  float hav = sinf(dlat * 0.5f) * sinf(dlat * 0.5f) +
-              cosf(lat1 * kDeg2Rad) * cosf(lat2 * kDeg2Rad) * sinf(dlon * 0.5f) * sinf(dlon * 0.5f);
-  return 12742.0f * asinf(sqrtf(std::clamp(hav, 0.0f, 1.0f)));
+  if (name == "UK (London GMT/BST)") {
+    tz = {0, -3600, mwd(3, 5, 0, 3600), mwd(10, 5, 0, 7200)};
+  } else if (name == "Europe (Paris/Berlin CET)") {
+    tz = {-3600, -7200, mwd(3, 5, 0, 7200), mwd(10, 5, 0, 10800)};
+  } else if (name == "Europe (Helsinki/Athens EET)") {
+    tz = {-7200, -10800, mwd(3, 5, 0, 10800), mwd(10, 5, 0, 14400)};
+  } else if (name == "US Eastern (ET)") {
+    tz = {18000, 14400, mwd(3, 2, 0, 7200), mwd(11, 1, 0, 7200)};
+  } else if (name == "US Central (CT)") {
+    tz = {21600, 18000, mwd(3, 2, 0, 7200), mwd(11, 1, 0, 7200)};
+  } else if (name == "US Mountain (MT)") {
+    tz = {25200, 21600, mwd(3, 2, 0, 7200), mwd(11, 1, 0, 7200)};
+  } else if (name == "US Pacific (PT)") {
+    tz = {28800, 25200, mwd(3, 2, 0, 7200), mwd(11, 1, 0, 7200)};
+  } else if (name == "Canada Atlantic (AT)") {
+    tz = {14400, 10800, mwd(3, 2, 0, 7200), mwd(11, 1, 0, 7200)};
+  } else if (name == "Australia Sydney (AEST/AEDT)") {
+    tz = {-36000, -39600, mwd(10, 1, 0, 7200), mwd(4, 1, 0, 10800)};
+  } else if (name == "Australia Perth (AWST)") {
+    tz = {-28800, -28800, none, none};
+  } else if (name == "New Zealand (NZST/NZDT)") {
+    tz = {-43200, -46800, mwd(9, 5, 0, 7200), mwd(4, 1, 0, 10800)};
+  } else if (name == "UTC") {
+    tz = {0, 0, none, none};
+  } else {
+    return false;
+  }
+  set_global_tz(tz);
+  return true;
 }
+#endif
 
 }  // namespace world_clock
