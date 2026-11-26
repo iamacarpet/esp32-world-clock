@@ -39,7 +39,7 @@ jobs:
       - name: Install system tools (Ninja, ImageMagick & FFmpeg)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build imagemagick ffmpeg
+          sudo apt-get install -y --no-install-recommends ninja-build imagemagick fonts-dejavu-core ffmpeg
 
       - name: Cache ESPHome & host build packages
         uses: actions/cache@v4
@@ -56,7 +56,7 @@ jobs:
       - name: Install ESPHome ${{ env.ESPHOME_VERSION }}
         run: pip install --no-cache-dir "esphome==${{ env.ESPHOME_VERSION }}"
 
-      - name: Run headless emulators & capture all modes (17 PNGs + 11 x 30s MP4 videos)
+      - name: Run headless emulators & capture all modes (22 PNGs + 12 x 30s MP4 videos)
         run: python3 scripts/run_emulator.py --out sim_output --video-seconds 30
 
       - name: Upload emulator screenshots & videos

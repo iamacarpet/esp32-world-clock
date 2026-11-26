@@ -230,7 +230,7 @@ script:
           uint32_t frames = (uint32_t)id(sim_video_secs) * 10U;
           ESP_LOGI("sim", "Recording %s (%u frames @ 10 fps = %ds)...", filename.c_str(), frames, id(sim_video_secs));
           id(main_display).take_animation(filename.c_str(), frames, 10.0f);
-      - delay: !lambda 'return (uint32_t)id(sim_video_secs) * 1000U + 1200U;'
+      - delay: !lambda 'return (uint32_t)id(sim_video_secs) * 1000U + 3000U;'
 
   - id: run_capture_suite
     mode: single
@@ -582,7 +582,7 @@ script:
           id(clock_time).set_epoch(1795243200, 1.0);  // 06:40 Wake-Up Day!
           id(force_redraw) = true;
       - script.execute: sim_sync_ui
-      - delay: !lambda 'return (uint32_t)id(sim_video_secs) * 200U + 1200U;'
+      - delay: !lambda 'return (uint32_t)id(sim_video_secs) * 200U + 3000U;'
 
       # 19. v1.1 Morning Launchpad Takeover (School Day — Thu 12 Nov 2026 08:08 GMT, Leave at 08:30!)
       - lambda: |-
@@ -751,7 +751,7 @@ script:
           id(clock_time).set_epoch(1794501300, 1.0);
           id(force_redraw) = true;
       - script.execute: sim_sync_ui
-      - delay: !lambda 'return (uint32_t)id(sim_video_secs) * 250U + 1200U;'
+      - delay: !lambda 'return (uint32_t)id(sim_video_secs) * 250U + 3000U;'
 
       - lambda: |-
           ESP_LOGI("sim", "All Leo standalone simulator captures complete! Exiting cleanly.");

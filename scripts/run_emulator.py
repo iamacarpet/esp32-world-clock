@@ -13,7 +13,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def run_cmd(cmd, env=None, cwd=None, timeout=600):
-    prefix = ["nice", "-n", "10"] if shutil.which("nice") else []
+    use_nice = shutil.which("nice") and not os.environ.get("CI")
+    prefix = ["nice", "-n", "10"] if use_nice else []
     full_cmd = prefix + cmd
     print(f"+ {' '.join(full_cmd)}", flush=True)
     subprocess.run(full_cmd, env=env, cwd=cwd, check=True, timeout=timeout)
@@ -50,16 +51,15 @@ def build_contact_sheet(png_files: list[Path], out_path: Path):
             "400x240+6+6",
             "-background",
             "#0b0c10",
-            "-fill",
-            "#e5e7eb",
-            "-pointsize",
-            "13",
             str(out_path),
         ]
-        run_cmd(cmd)
-    elif shutil.which("convert"):
+        try:
+            run_cmd(cmd)
+            return
+        except subprocess.CalledProcessError:
+            print("WARN: montage failed; falling back to convert grid...", flush=True)
+    if shutil.which("convert"):
         # Fallback: simple 4-column grid using ImageMagick convert
-        rows = []
         tmp_rows = []
         for idx in range(0, len(png_files), 4):
             chunk = png_files[idx : idx + 4]
@@ -80,11 +80,16 @@ def encode_mp4_from_gifs(gif_files: list[Path], out_dir: Path, keep_gifs: bool):
         return
     mp4_files = []
     for gif in gif_files:
+        if gif.stat().st_size == 0:
+            print(f"WARN: skipping empty GIF {gif.name}", flush=True)
+            continue
         mp4 = out_dir / f"{gif.stem}.mp4"
         run_cmd(
             [
                 "ffmpeg",
                 "-y",
+                "-loglevel",
+                "warning",
                 "-i",
                 str(gif),
                 "-movflags",
@@ -92,7 +97,9 @@ def encode_mp4_from_gifs(gif_files: list[Path], out_dir: Path, keep_gifs: bool):
                 "-pix_fmt",
                 "yuv420p",
                 "-vf",
-                "scale=800:480:flags=neighbor",
+                "scale=800:480:flags=neighbor,fps=10",
+                "-video_track_timescale",
+                "10000",
                 "-c:v",
                 "libx264",
                 "-crf",
@@ -112,6 +119,8 @@ def encode_mp4_from_gifs(gif_files: list[Path], out_dir: Path, keep_gifs: bool):
             [
                 "ffmpeg",
                 "-y",
+                "-loglevel",
+                "warning",
                 "-f",
                 "concat",
                 "-safe",
@@ -159,8 +168,8 @@ def main():
     env["ESPHOME_SNAPSHOT_DIR"] = str(out_dir)
     env["SIM_VIDEO_SECONDS"] = str(video_secs)
 
-    # Allow generous timeout for 11 animated videos (up to 60s each + stabilisation)
-    run_timeout = max(300, video_secs * 15 + 180)
+    # Allow generous timeout for 12 animated videos (up to 60s each + stabilisation & GIF flush)
+    run_timeout = max(300, video_secs * 22 + 240)
 
     for sim_rel in args.sims:
         sim_yaml = (REPO_ROOT / sim_rel).resolve()
