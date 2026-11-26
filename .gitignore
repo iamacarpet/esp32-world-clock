@@ -1,6 +1,7 @@
 # ESPHome build artifacts & secrets
 /.esphome/
 /examples/.esphome/
+/examples/.gitignore
 /sim/.esphome/
 /sim/.gitignore
 /sim_output/

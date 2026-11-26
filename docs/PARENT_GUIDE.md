@@ -40,7 +40,7 @@ Instead of opening the clock's settings every week, you can link your existing *
 
 #### Apple iPhone / iCloud Calendar
 1. Open the **Calendar** app on your iPhone/iPad.
-2. Tap **Calendars** at the bottom. *(Tip: create a dedicated "Charlie" or "Family Kids" calendar so work meetings don't appear on the clock!)*
+2. Tap **Calendars** at the bottom. *(Tip: create a dedicated "Leo" or "Family Kids" calendar so work meetings don't appear on the clock!)*
 3. Tap the **`(i)`** button next to that calendar.
 4. Toggle **Public Calendar** ON, tap **Share Link...**, and tap **Copy**.
 5. Open your clock's Web Settings → **5. Family & School Calendar (.ics)** → paste the link directly into **Family Calendar URL** *(you can paste `webcal://...` directly — the clock handles it automatically!)*.
