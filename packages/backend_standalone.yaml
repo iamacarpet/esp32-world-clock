@@ -971,6 +971,10 @@ text_sensor:
     id: diag_hw_id
     name: "Hardware ID (MAC Suffix)"
     web_server: { sorting_group_id: grp_diag, sorting_weight: 8 }
+  - platform: template
+    id: diag_cal_status
+    name: "Calendar Sync Status"
+    web_server: { sorting_group_id: grp_diag, sorting_weight: 9 }
   - platform: version
     name: "Firmware Version"
     web_server: { sorting_group_id: grp_diag, sorting_weight: 40 }
@@ -1026,6 +1030,7 @@ interval:
           static uint32_t s_seen_iss_ms = 0;
           bool wx_changed = false;
           bool got_iss = false;
+          std::string cal_diag_pub;
           float in_lat = 0.0f, in_lon = 0.0f;
           bool in_ecl = false;
           uint32_t iss_stamp = 0;
@@ -1067,10 +1072,14 @@ interval:
               id(cal_school_configured) = (t.school_cal_url[0] != '\0') || t.family_cal.today_is_school_holiday;
               id(cal_school_holiday) = t.school_cal.today_is_school_holiday || t.family_cal.today_is_school_holiday;
               id(cal_school_note) = (t.school_cal.school_note[0] != '\0') ? t.school_cal.school_note : t.family_cal.school_note;
+              cal_diag_pub = t.cal_diag;
               t.cal_dirty = false;
               wx_changed = true;
             }
             t.unlock();
+          }
+          if (!cal_diag_pub.empty()) {
+            id(diag_cal_status).publish_state(cal_diag_pub);
           }
 
           id(cur_wx_age_ok) = s_wx_ever && ((uint32_t)(now_ms - s_wx_stamp) <= 7200000UL);

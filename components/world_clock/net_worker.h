@@ -10,6 +10,7 @@
 #include <esp_crt_bundle.h>
 #include <esp_heap_caps.h>
 #include <esp_http_client.h>
+#include <esp_tls.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -67,6 +68,7 @@ struct StandaloneTelemetry {
   char school_cal_url[256]{""};
   IcsFeedSummary family_cal{};
   IcsFeedSummary school_cal{};
+  char cal_diag[96]{"Waiting for sync"};
   bool cal_dirty{false};
 
   void ensure_mutex() {
@@ -118,6 +120,9 @@ class NetWorker {
     size_t *total_bytes{nullptr};
     uint32_t chain_start_ms{0};
     bool aborted{false};
+    int tls_err{0};
+    int mbedtls_err{0};
+    int cert_flags{0};
     char redirect_loc[288]{""};
   };
 
@@ -158,25 +163,37 @@ class NetWorker {
   }
 
   // Resolves host via DNS and rejects any URL whose host resolves to a loopback/RFC1918/link-local/CGNAT/ULA IP!
-  static bool verify_public_dns(const char *url) {
-    if (!is_public_https_url(url)) return false;
+  static bool verify_public_dns(const char *url, char *err_out = nullptr, size_t err_cap = 0) {
+    if (!is_public_https_url(url)) {
+      if (err_out && err_cap) snprintf(err_out, err_cap, "bad_host");
+      return false;
+    }
     char host[128];
-    if (!extract_https_host(url, host, sizeof(host))) return false;
+    if (!extract_https_host(url, host, sizeof(host))) {
+      if (err_out && err_cap) snprintf(err_out, err_cap, "bad_host");
+      return false;
+    }
     struct addrinfo hints = {};
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_family = AF_UNSPEC;
     struct addrinfo *res = nullptr;
-    if (getaddrinfo(host, nullptr, &hints, &res) != 0 || res == nullptr) return false;
+    int gai_rc = getaddrinfo(host, nullptr, &hints, &res);
+    if (gai_rc != 0 || res == nullptr) {
+      if (err_out && err_cap) snprintf(err_out, err_cap, "dns=%d", gai_rc);
+      return false;
+    }
     bool all_public = true;
     int count = 0;
     for (struct addrinfo *p = res; p != nullptr; p = p->ai_next) {
       count++;
       if (is_private_sockaddr(p)) {
+        if (err_out && err_cap) snprintf(err_out, err_cap, "priv_ip(af=%d)", p->ai_family);
         all_public = false;
         break;
       }
     }
     freeaddrinfo(res);
+    if (count == 0 && err_out && err_cap) snprintf(err_out, err_cap, "dns_empty");
     return (count > 0 && all_public);
   }
 
@@ -198,7 +215,13 @@ class NetWorker {
   static esp_err_t on_ics_stream_data(esp_http_client_event_t *evt) {
     if (evt->user_data == nullptr) return ESP_OK;
     IcsStreamCtx *ctx = (IcsStreamCtx *)evt->user_data;
-    if (evt->event_id == HTTP_EVENT_ON_HEADER && evt->header_key != nullptr && evt->header_value != nullptr) {
+    if (evt->event_id == HTTP_EVENT_ERROR && evt->data != nullptr &&
+        evt->data_len >= (int)sizeof(esp_tls_last_error_t)) {
+      const esp_tls_last_error_t *te = (const esp_tls_last_error_t *)evt->data;
+      ctx->tls_err = (int)te->last_error;
+      ctx->mbedtls_err = (int)te->esp_tls_stack_err;
+      ctx->cert_flags = (int)te->esp_tls_cert_verify_flags;
+    } else if (evt->event_id == HTTP_EVENT_ON_HEADER && evt->header_key != nullptr && evt->header_value != nullptr) {
       if (strcasecmp(evt->header_key, "Location") == 0 && ctx->redirect_loc[0] == '\0') {
         snprintf(ctx->redirect_loc, sizeof(ctx->redirect_loc), "%s", evt->header_value);
       }
@@ -280,15 +303,29 @@ class NetWorker {
 
   // Streams iCloud / Google / School .ics feeds straight into IcsStreamParser (< 2 KB RAM)
   // with strict HTTPS, CA bundle, manual redirect validation (anti-downgrade & anti-SSRF), full-chain byte & time caps!
-  static bool fetch_ics_stream(const char *raw_url, IcsStreamParser &parser, char *norm_url, size_t norm_cap) {
-    if (!normalize_calendar_url(raw_url, norm_url, norm_cap)) return false;
+  static bool fetch_ics_stream(const char *raw_url, IcsStreamParser &parser, char *norm_url, size_t norm_cap,
+                               char *diag_out = nullptr, size_t diag_cap = 0) {
+    auto set_diag = [&](const char *msg) {
+      if (diag_out && diag_cap) snprintf(diag_out, diag_cap, "%s", msg);
+    };
+    if (!normalize_calendar_url(raw_url, norm_url, norm_cap)) {
+      set_diag("bad_url");
+      return false;
+    }
 
     uint32_t chain_start_ms = esphome::millis();
     size_t chain_total_bytes = 0;
 
     for (int hop = 0; hop <= 3; hop++) {
-      if ((uint32_t)(esphome::millis() - chain_start_ms) > kMaxIcsWallMs) return false;
-      if (!verify_public_dns(norm_url)) return false;
+      if ((uint32_t)(esphome::millis() - chain_start_ms) > kMaxIcsWallMs) {
+        set_diag("timeout");
+        return false;
+      }
+      char dns_err[24] = "";
+      if (!verify_public_dns(norm_url, dns_err, sizeof(dns_err))) {
+        set_diag(dns_err[0] ? dns_err : "dns_fail");
+        return false;
+      }
       parser.reset();
 
       IcsStreamCtx ctx;
@@ -308,27 +345,57 @@ class NetWorker {
       cfg.disable_auto_redirect = true;
 
       esp_http_client_handle_t client = esp_http_client_init(&cfg);
-      if (client == nullptr) return false;
+      if (client == nullptr) {
+        set_diag("init_err");
+        return false;
+      }
       esp_http_client_set_header(client, "Accept-Encoding", "identity");
       esp_http_client_set_header(client, "Connection", "close");
-      esp_http_client_set_header(client, "User-Agent", "WorldClock/1.2");
+      esp_http_client_set_header(client, "User-Agent", "WorldClock/1.3");
 
       esp_err_t err = esp_http_client_perform(client);
       int status = esp_http_client_get_status_code(client);
       esp_http_client_cleanup(client);
 
-      if (err != ESP_OK || ctx.aborted) return false;
+      if (err != ESP_OK || ctx.aborted) {
+        if (diag_out && diag_cap) {
+          if (ctx.aborted) snprintf(diag_out, diag_cap, "cap(%uB)", (unsigned)chain_total_bytes);
+          else if (ctx.mbedtls_err != 0 || ctx.cert_flags != 0)
+            snprintf(diag_out, diag_cap, "tls=-0x%x/f=0x%x", (unsigned)(-ctx.mbedtls_err), (unsigned)ctx.cert_flags);
+          else
+            snprintf(diag_out, diag_cap, "err=0x%x/st=%d", (unsigned)err, status);
+        }
+        return false;
+      }
       if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
-        if (hop == 3 || ctx.redirect_loc[0] == '\0') return false;
+        if (hop == 3 || ctx.redirect_loc[0] == '\0') {
+          set_diag("redir_fail");
+          return false;
+        }
         char next_url[288];
-        if (!resolve_https_redirect(norm_url, ctx.redirect_loc, next_url, sizeof(next_url))) return false;
+        if (!resolve_https_redirect(norm_url, ctx.redirect_loc, next_url, sizeof(next_url))) {
+          set_diag("redir_http");
+          return false;
+        }
         snprintf(norm_url, norm_cap, "%s", next_url);
         continue;
       }
-      if (status < 200 || status >= 300) return false;
+      if (status < 200 || status >= 300) {
+        if (diag_out && diag_cap) snprintf(diag_out, diag_cap, "http=%d", status);
+        return false;
+      }
       parser.finish();
-      return parser.summary().valid;
+      if (!parser.summary().valid) {
+        if (diag_out && diag_cap) snprintf(diag_out, diag_cap, "no_ics(%uB)", (unsigned)chain_total_bytes);
+        return false;
+      }
+      if (diag_out && diag_cap) {
+        snprintf(diag_out, diag_cap, "OK(%dev%s)", parser.summary().events_seen,
+                 parser.summary().today_is_school_holiday ? ",HOL" : "");
+      }
+      return true;
     }
+    set_diag("redir_loop");
     return false;
   }
 
@@ -546,16 +613,18 @@ class NetWorker {
           IcsFeedSummary fam_res{};
           IcsFeedSummary sch_res{};
           bool ok_fam = false, ok_sch = false;
+          char fam_diag[36] = "none";
+          char sch_diag[36] = "none";
 
           if (fam_u[0] != '\0') {
             IcsStreamParser p_fam(cy, cm, cd, false, utc_off_min);
-            ok_fam = fetch_ics_stream(fam_u, p_fam, url_buf, kUrlCap);
+            ok_fam = fetch_ics_stream(fam_u, p_fam, url_buf, kUrlCap, fam_diag, sizeof(fam_diag));
             if (ok_fam) fam_res = p_fam.summary();
             vTaskDelay(pdMS_TO_TICKS(100));
           }
           if (sch_u[0] != '\0') {
             IcsStreamParser p_sch(cy, cm, cd, true, utc_off_min);
-            ok_sch = fetch_ics_stream(sch_u, p_sch, url_buf, kUrlCap);
+            ok_sch = fetch_ics_stream(sch_u, p_sch, url_buf, kUrlCap, sch_diag, sizeof(sch_diag));
             if (ok_sch) sch_res = p_sch.summary();
           }
 
@@ -564,6 +633,7 @@ class NetWorker {
             else if (ok_fam) t.family_cal = fam_res;
             if (sch_u[0] == '\0') t.school_cal = IcsFeedSummary{};
             else if (ok_sch) t.school_cal = sch_res;
+            snprintf(t.cal_diag, sizeof(t.cal_diag), "Fam:%s | Sch:%s", fam_diag, sch_diag);
             t.cal_dirty = true;
             t.unlock();
           }
@@ -571,6 +641,11 @@ class NetWorker {
           t.sync_busy.store(false, std::memory_order_release);
           next_cal_ms = esphome::millis() + ((ok_fam || ok_sch) ? 1800000UL : 120000UL);
         } else {
+          if (t.lock(pdMS_TO_TICKS(50))) {
+            snprintf(t.cal_diag, sizeof(t.cal_diag), (cy < 2024) ? "Waiting for date" : "No calendar URLs");
+            t.cal_dirty = true;
+            t.unlock();
+          }
           next_cal_ms = esphome::millis() + 15000UL;
         }
       }

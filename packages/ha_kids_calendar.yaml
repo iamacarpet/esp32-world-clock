@@ -32,6 +32,12 @@ esp32:
 http_request:
   timeout: 5s
 
+text_sensor:
+  - platform: template
+    id: ha_cal_sync_status
+    name: "Calendar Sync Status"
+    entity_category: diagnostic
+
 select:
   - platform: template
     id: ha_age_profile
@@ -367,10 +373,15 @@ interval:
               }
               id(cal_school_holiday) = id(sch_cal_summary).today_is_school_holiday || id(fam_cal_summary).today_is_school_holiday;
               id(cal_school_note) = (id(sch_cal_summary).school_note[0] != '\0') ? id(sch_cal_summary).school_note : id(fam_cal_summary).school_note;
+              std::string diag_copy = t_cal.cal_diag;
               t_cal.cal_dirty = false;
               id(force_redraw) = true;
+              t_cal.unlock();
+              id(ha_cal_sync_status).publish_state(diag_copy);
+              ESP_LOGI("world_clock", "Calendar sync: %s", diag_copy.c_str());
+            } else {
+              t_cal.unlock();
             }
-            t_cal.unlock();
           }
 
           // Sync live Kids/Teen/Calendar HA entities into shared core state
