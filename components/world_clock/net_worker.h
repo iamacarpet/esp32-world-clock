@@ -102,25 +102,15 @@ class NetWorker {
       t.work_lon = init_lon;
       t.unlock();
     }
-    // Allocate worker stack cleanly: try 10KB internal SRAM first, then 8KB internal SRAM,
-    // and finally fall back to 14KB in 8MB Octal PSRAM (NetWorker never touches SPI flash/NVS!)
-    // so fragmented internal SRAM (LVGL + Wi-Fi + Noise API) can NEVER silently prevent NetWorker from spawning!
+    // All large ICS parser & summary structs live in PSRAM WorkerScratch, so 8KB internal SRAM stack is ample
+    // (try 10KB first, then 8KB) — never silently ignore xTaskCreatePinnedToCore failure!
     const char *stack_src = "OOM";
     BaseType_t ok = xTaskCreatePinnedToCore(&NetWorker::task_loop, "cloud_sync", 10240, nullptr, 1, nullptr, 0);
     if (ok == pdPASS) {
       stack_src = "SRAM-10K";
     } else {
       ok = xTaskCreatePinnedToCore(&NetWorker::task_loop, "cloud_sync", 8192, nullptr, 1, nullptr, 0);
-      if (ok == pdPASS) {
-        stack_src = "SRAM-8K";
-      }
-#if defined(CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY)
-      else {
-        ok = xTaskCreatePinnedToCoreWithCaps(&NetWorker::task_loop, "cloud_sync", 14336, nullptr, 1, nullptr, 0,
-                                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (ok == pdPASS) stack_src = "PSRAM-14K";
-      }
-#endif
+      if (ok == pdPASS) stack_src = "SRAM-8K";
     }
     if (t.lock(pdMS_TO_TICKS(50))) {
       if (ok == pdPASS) {
