@@ -20,7 +20,6 @@ esphome:
               snprintf(t.school_cal_url, sizeof(t.school_cal_url), "%s", id(ha_school_cal_url).state.c_str());
               t.unlock();
             }
-            world_clock::NetWorker::start((float)${default_lat}, (float)${default_lon});
 
 esp32:
   framework:
@@ -333,6 +332,11 @@ interval:
       - lambda: |-
           auto now = id(clock_time).now();
           auto utc = id(clock_time).utcnow();
+
+          // Start Core 0 NetWorker ONLY AFTER Wi-Fi + HA API + Time have connected (never starve Wi-Fi init!)
+          if (id(boot_complete)) {
+            world_clock::NetWorker::start((float)${default_lat}, (float)${default_lon});
+          }
 
           // Sync live Core 1 status & UTC offset into Core 0 NetWorker atomics (zero cross-core ESPHome calls!)
           auto &t_cal = world_clock::standalone_telemetry();

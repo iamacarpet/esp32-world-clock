@@ -102,22 +102,27 @@ class NetWorker {
       t.work_lon = init_lon;
       t.unlock();
     }
-    // All large ICS parser & summary structs live in PSRAM WorkerScratch, so 8KB internal SRAM stack is ample
-    // (try 10KB first, then 8KB) — never silently ignore xTaskCreatePinnedToCore failure!
-    const char *stack_src = "OOM";
-    BaseType_t ok = xTaskCreatePinnedToCore(&NetWorker::task_loop, "cloud_sync", 10240, nullptr, 1, nullptr, 0);
-    if (ok == pdPASS) {
-      stack_src = "SRAM-10K";
-    } else {
+    // Guard internal SRAM headroom so NetWorker can NEVER starve Wi-Fi or HA Noise API!
+    // (All large ICS parser & summary structs live in PSRAM WorkerScratch, so 8KB SRAM stack is ample.)
+    size_t free_int = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t max_blk = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const char *stack_src = "LOW_RAM";
+    BaseType_t ok = pdFAIL;
+    if (free_int >= 24576 && max_blk >= 12288) {
+      ok = xTaskCreatePinnedToCore(&NetWorker::task_loop, "cloud_sync", 10240, nullptr, 1, nullptr, 0);
+      if (ok == pdPASS) stack_src = "SRAM-10K";
+    }
+    if (ok != pdPASS && free_int >= 20480 && max_blk >= 10240) {
       ok = xTaskCreatePinnedToCore(&NetWorker::task_loop, "cloud_sync", 8192, nullptr, 1, nullptr, 0);
       if (ok == pdPASS) stack_src = "SRAM-8K";
     }
     if (t.lock(pdMS_TO_TICKS(50))) {
       if (ok == pdPASS) {
-        snprintf(t.cal_diag, sizeof(t.cal_diag), "Worker started (%s)", stack_src);
+        snprintf(t.cal_diag, sizeof(t.cal_diag), "Started %s (int=%uK/%uK)", stack_src,
+                 (unsigned)(free_int / 1024), (unsigned)(max_blk / 1024));
       } else {
-        size_t max_blk = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-        snprintf(t.cal_diag, sizeof(t.cal_diag), "Worker OOM (maxInt=%uB)", (unsigned)max_blk);
+        snprintf(t.cal_diag, sizeof(t.cal_diag), "Skipped %s (int=%uK/%uK)", stack_src,
+                 (unsigned)(free_int / 1024), (unsigned)(max_blk / 1024));
       }
       t.cal_diag_dirty = true;
       t.unlock();
