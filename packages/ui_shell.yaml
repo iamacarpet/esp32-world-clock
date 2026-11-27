@@ -2,7 +2,9 @@
 lvgl:
   displays:
     - main_display
-  buffer_size: 25%
+  # 50% (buffer_frac=2 < MIN_BUFFER_FRAC/2) forces LVGL's draw buffer into 8MB Octal PSRAM
+  # instead of stealing 192KB of precious internal SRAM (which left only 14KB free for Wi-Fi + TLS NetWorker!)
+  buffer_size: 50%
   bg_color: 0x000000
   top_layer:
     widgets:
