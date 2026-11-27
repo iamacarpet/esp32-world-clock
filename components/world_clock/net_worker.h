@@ -7,6 +7,7 @@
 #include "clock_math.h"
 #include "ics_parser.h"
 #include <atomic>
+#include <new>
 #include <esp_crt_bundle.h>
 #include <esp_heap_caps.h>
 #include <esp_http_client.h>
@@ -70,6 +71,7 @@ struct StandaloneTelemetry {
   IcsFeedSummary school_cal{};
   char cal_diag[96]{"Waiting for sync"};
   bool cal_dirty{false};
+  bool cal_diag_dirty{false};
 
   void ensure_mutex() {
     if (mtx == nullptr) mtx = xSemaphoreCreateMutex();
@@ -100,8 +102,36 @@ class NetWorker {
       t.work_lon = init_lon;
       t.unlock();
     }
-    // 14KB stack on Core 0 gives generous headroom for mbedTLS + crt_bundle + DNS + streaming ICS parser
-    xTaskCreatePinnedToCore(&NetWorker::task_loop, "cloud_sync", 14336, nullptr, 1, nullptr, 0);
+    // Allocate worker stack cleanly: try 10KB internal SRAM first, then 8KB internal SRAM,
+    // and finally fall back to 14KB in 8MB Octal PSRAM (NetWorker never touches SPI flash/NVS!)
+    // so fragmented internal SRAM (LVGL + Wi-Fi + Noise API) can NEVER silently prevent NetWorker from spawning!
+    const char *stack_src = "OOM";
+    BaseType_t ok = xTaskCreatePinnedToCore(&NetWorker::task_loop, "cloud_sync", 10240, nullptr, 1, nullptr, 0);
+    if (ok == pdPASS) {
+      stack_src = "SRAM-10K";
+    } else {
+      ok = xTaskCreatePinnedToCore(&NetWorker::task_loop, "cloud_sync", 8192, nullptr, 1, nullptr, 0);
+      if (ok == pdPASS) {
+        stack_src = "SRAM-8K";
+      }
+#if defined(CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY)
+      else {
+        ok = xTaskCreatePinnedToCoreWithCaps(&NetWorker::task_loop, "cloud_sync", 14336, nullptr, 1, nullptr, 0,
+                                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (ok == pdPASS) stack_src = "PSRAM-14K";
+      }
+#endif
+    }
+    if (t.lock(pdMS_TO_TICKS(50))) {
+      if (ok == pdPASS) {
+        snprintf(t.cal_diag, sizeof(t.cal_diag), "Worker started (%s)", stack_src);
+      } else {
+        size_t max_blk = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        snprintf(t.cal_diag, sizeof(t.cal_diag), "Worker OOM (maxInt=%uB)", (unsigned)max_blk);
+      }
+      t.cal_diag_dirty = true;
+      t.unlock();
+    }
   }
 
  private:
@@ -399,15 +429,32 @@ class NetWorker {
     return false;
   }
 
+  // PSRAM scratch arena so large ICS parser & summary structs never sit on the FreeRTOS stack
+  struct WorkerScratch {
+    char rx[4096];
+    char url_buf[288];
+    char fc_local[128];
+    char fam_u[256];
+    char sch_u[256];
+    IcsStreamParser parser;
+    IcsFeedSummary fam_res;
+    IcsFeedSummary sch_res;
+  };
+
   static void task_loop(void *) {
     auto &t = standalone_telemetry();
-    constexpr size_t kRxCap = 4096;
-    constexpr size_t kUrlCap = 288;
-    constexpr size_t kFcCap = 128;
-    char *arena = (char *)heap_caps_malloc(kRxCap + kUrlCap + kFcCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    char *rx = arena;
-    char *url_buf = (arena != nullptr) ? (arena + kRxCap) : nullptr;
-    char *fc_local = (arena != nullptr) ? (arena + kRxCap + kUrlCap) : nullptr;
+    constexpr size_t kRxCap = sizeof(((WorkerScratch *)0)->rx);
+    constexpr size_t kUrlCap = sizeof(((WorkerScratch *)0)->url_buf);
+    constexpr size_t kFcCap = sizeof(((WorkerScratch *)0)->fc_local);
+    void *raw_ws = heap_caps_malloc(sizeof(WorkerScratch), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (raw_ws == nullptr) {
+      raw_ws = heap_caps_malloc(sizeof(WorkerScratch), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
+    WorkerScratch *ws = (raw_ws != nullptr) ? new (raw_ws) WorkerScratch() : nullptr;
+    char *arena = (char *)ws;
+    char *rx = (ws != nullptr) ? ws->rx : nullptr;
+    char *url_buf = (ws != nullptr) ? ws->url_buf : nullptr;
+    char *fc_local = (ws != nullptr) ? ws->fc_local : nullptr;
 
     uint32_t next_wx_ms = 0;
     uint32_t next_iss_ms = 0;
@@ -595,46 +642,47 @@ class NetWorker {
       // 3. Optional Family & School Calendar (.ics / webcal://) Streaming Poll (every 30 min — Standalone & HA Kids!)
       now_ms = esphome::millis();
       if ((int32_t)(now_ms - next_cal_ms) >= 0) {
-        char fam_u[256] = "";
-        char sch_u[256] = "";
+        ws->fam_u[0] = '\0';
+        ws->sch_u[0] = '\0';
         int cy = 0, cm = 0, cd = 0;
         int utc_off_min = t.local_utc_offset_min.load(std::memory_order_relaxed);
         if (t.lock()) {
-          snprintf(fam_u, sizeof(fam_u), "%s", t.family_cal_url);
-          snprintf(sch_u, sizeof(sch_u), "%s", t.school_cal_url);
+          snprintf(ws->fam_u, sizeof(ws->fam_u), "%s", t.family_cal_url);
+          snprintf(ws->sch_u, sizeof(ws->sch_u), "%s", t.school_cal_url);
           cy = t.loc_year;
           cm = t.loc_month;
           cd = t.loc_day;
           t.unlock();
         }
 
-        if (cy >= 2024 && (fam_u[0] != '\0' || sch_u[0] != '\0')) {
+        if (cy >= 2024 && (ws->fam_u[0] != '\0' || ws->sch_u[0] != '\0')) {
           t.sync_busy.store(true, std::memory_order_release);
-          IcsFeedSummary fam_res{};
-          IcsFeedSummary sch_res{};
+          ws->fam_res = IcsFeedSummary{};
+          ws->sch_res = IcsFeedSummary{};
           bool ok_fam = false, ok_sch = false;
           char fam_diag[36] = "none";
           char sch_diag[36] = "none";
 
-          if (fam_u[0] != '\0') {
-            IcsStreamParser p_fam(cy, cm, cd, false, utc_off_min);
-            ok_fam = fetch_ics_stream(fam_u, p_fam, url_buf, kUrlCap, fam_diag, sizeof(fam_diag));
-            if (ok_fam) fam_res = p_fam.summary();
+          if (ws->fam_u[0] != '\0') {
+            ws->parser = IcsStreamParser(cy, cm, cd, false, utc_off_min);
+            ok_fam = fetch_ics_stream(ws->fam_u, ws->parser, url_buf, kUrlCap, fam_diag, sizeof(fam_diag));
+            if (ok_fam) ws->fam_res = ws->parser.summary();
             vTaskDelay(pdMS_TO_TICKS(100));
           }
-          if (sch_u[0] != '\0') {
-            IcsStreamParser p_sch(cy, cm, cd, true, utc_off_min);
-            ok_sch = fetch_ics_stream(sch_u, p_sch, url_buf, kUrlCap, sch_diag, sizeof(sch_diag));
-            if (ok_sch) sch_res = p_sch.summary();
+          if (ws->sch_u[0] != '\0') {
+            ws->parser = IcsStreamParser(cy, cm, cd, true, utc_off_min);
+            ok_sch = fetch_ics_stream(ws->sch_u, ws->parser, url_buf, kUrlCap, sch_diag, sizeof(sch_diag));
+            if (ok_sch) ws->sch_res = ws->parser.summary();
           }
 
           if (t.lock(pdMS_TO_TICKS(100))) {
-            if (fam_u[0] == '\0') t.family_cal = IcsFeedSummary{};
-            else if (ok_fam) t.family_cal = fam_res;
-            if (sch_u[0] == '\0') t.school_cal = IcsFeedSummary{};
-            else if (ok_sch) t.school_cal = sch_res;
+            if (ws->fam_u[0] == '\0') t.family_cal = IcsFeedSummary{};
+            else if (ok_fam) t.family_cal = ws->fam_res;
+            if (ws->sch_u[0] == '\0') t.school_cal = IcsFeedSummary{};
+            else if (ok_sch) t.school_cal = ws->sch_res;
             snprintf(t.cal_diag, sizeof(t.cal_diag), "Fam:%s | Sch:%s", fam_diag, sch_diag);
             t.cal_dirty = true;
+            t.cal_diag_dirty = true;
             t.unlock();
           }
 
@@ -643,7 +691,7 @@ class NetWorker {
         } else {
           if (t.lock(pdMS_TO_TICKS(50))) {
             snprintf(t.cal_diag, sizeof(t.cal_diag), (cy < 2024) ? "Waiting for date" : "No calendar URLs");
-            t.cal_dirty = true;
+            t.cal_diag_dirty = true;
             t.unlock();
           }
           next_cal_ms = esphome::millis() + 15000UL;

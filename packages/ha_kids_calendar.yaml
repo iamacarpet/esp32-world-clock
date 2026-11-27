@@ -27,6 +27,9 @@ esp32:
     sdkconfig_options:
       CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC: "y"
       CONFIG_MBEDTLS_CERTIFICATE_BUNDLE: "y"
+      CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL: "y"
+      CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_CMN: "n"
+      CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY: "y"
       CONFIG_LWIP_MAX_SOCKETS: "18"
 
 http_request:
@@ -344,6 +347,7 @@ interval:
             t_cal.local_utc_offset_min.store((int)(loc_min - utc_min), std::memory_order_relaxed);
           }
 
+          std::string diag_copy;
           if (t_cal.try_lock()) {
             if (now.is_valid()) {
               t_cal.loc_year = now.year;
@@ -373,15 +377,18 @@ interval:
               }
               id(cal_school_holiday) = id(sch_cal_summary).today_is_school_holiday || id(fam_cal_summary).today_is_school_holiday;
               id(cal_school_note) = (id(sch_cal_summary).school_note[0] != '\0') ? id(sch_cal_summary).school_note : id(fam_cal_summary).school_note;
-              std::string diag_copy = t_cal.cal_diag;
               t_cal.cal_dirty = false;
               id(force_redraw) = true;
-              t_cal.unlock();
-              id(ha_cal_sync_status).publish_state(diag_copy);
-              ESP_LOGI("world_clock", "Calendar sync: %s", diag_copy.c_str());
-            } else {
-              t_cal.unlock();
             }
+            if (t_cal.cal_diag_dirty) {
+              diag_copy = t_cal.cal_diag;
+              t_cal.cal_diag_dirty = false;
+            }
+            t_cal.unlock();
+          }
+          if (!diag_copy.empty()) {
+            id(ha_cal_sync_status).publish_state(diag_copy);
+            ESP_LOGI("world_clock", "Calendar sync: %s", diag_copy.c_str());
           }
 
           // Sync live Kids/Teen/Calendar HA entities into shared core state

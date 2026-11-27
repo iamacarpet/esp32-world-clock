@@ -572,6 +572,7 @@ inline CalendarView build_calendar_view(const IcsFeedSummary &fam, const IcsFeed
 // Handles multi-megabyte iCloud / Google / School feeds using < 2 KB of stack/member memory!
 class IcsStreamParser {
  public:
+  IcsStreamParser() = default;
   IcsStreamParser(int cur_y, int cur_m, int cur_d, bool is_school_feed = false, int local_utc_offset_min = 0)
       : cur_y_(cur_y),
         cur_m_(cur_m),
