@@ -219,8 +219,8 @@ class NetWorker {
         evt->data_len >= (int)sizeof(esp_tls_last_error_t)) {
       const esp_tls_last_error_t *te = (const esp_tls_last_error_t *)evt->data;
       ctx->tls_err = (int)te->last_error;
-      ctx->mbedtls_err = (int)te->esp_tls_stack_err;
-      ctx->cert_flags = (int)te->esp_tls_cert_verify_flags;
+      ctx->mbedtls_err = (int)te->esp_tls_error_code;
+      ctx->cert_flags = (int)te->esp_tls_flags;
     } else if (evt->event_id == HTTP_EVENT_ON_HEADER && evt->header_key != nullptr && evt->header_value != nullptr) {
       if (strcasecmp(evt->header_key, "Location") == 0 && ctx->redirect_loc[0] == '\0') {
         snprintf(ctx->redirect_loc, sizeof(ctx->redirect_loc), "%s", evt->header_value);
