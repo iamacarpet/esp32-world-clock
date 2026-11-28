@@ -52,8 +52,13 @@ select:
       then:
         - lambda: |-
             id(minimal_teen_mode) = (x == "Teen & Study Desk (12+)");
-            if (x == "Teen & Study Desk (12+)") id(use_24h_clock) = true;
-            else id(use_24h_clock) = ${default_use_24h};
+            if (x == "Teen & Study Desk (12+)") {
+              id(use_24h_clock) = true;
+              id(ha_cal_style).publish_state("Subtle Ticker Only");
+            } else {
+              id(use_24h_clock) = ${default_use_24h};
+              id(ha_cal_style).publish_state("Morning Launchpad Takeover");
+            }
             id(force_redraw) = true;
   - platform: template
     id: ha_cal_priority
@@ -75,7 +80,7 @@ select:
     name: "Calendar Display Style"
     optimistic: true
     restore_value: true
-    initial_option: "Subtle Ticker Only"
+    initial_option: "Morning Launchpad Takeover"
     options:
       - "Subtle Ticker Only"
       - "Prominent Dock Card"
@@ -85,6 +90,20 @@ select:
         - lambda: |-
             id(cal_display_style) = (x == "Prominent Dock Card") ? 1 : ((x == "Morning Launchpad Takeover") ? 2 : 0);
             id(force_redraw) = true;
+  - platform: template
+    id: ha_ev_takeover_source
+    name: "Event Countdown Takeover Source"
+    optimistic: true
+    restore_value: true
+    initial_option: "Family Only"
+    options:
+      - "Off"
+      - "Family Only"
+      - "School Only"
+      - "Both Calendars"
+    on_value:
+      then:
+        - lambda: 'id(force_redraw) = true;'
 
 button:
   - platform: template
@@ -93,6 +112,14 @@ button:
     on_press:
       then:
         - lambda: 'world_clock::standalone_telemetry().cal_force_sync.store(true, std::memory_order_release);'
+  - platform: template
+    name: "Dismiss Active Event Board"
+    id: ha_dismiss_event_btn
+    on_press:
+      then:
+        - lambda: |-
+            if (id(ev_active_key) != 0) id(ev_dismissed_key) = id(ev_active_key);
+            id(force_redraw) = true;
   - platform: template
     name: "Start Nap Mode Now"
     on_press:
@@ -195,6 +222,13 @@ switch:
     restore_mode: RESTORE_DEFAULT_ON
     on_turn_on:  { then: [ lambda: 'id(sched_sleep_stars_en) = true; id(force_redraw) = true;' ] }
     on_turn_off: { then: [ lambda: 'id(sched_sleep_stars_en) = false; id(force_redraw) = true;' ] }
+  - platform: template
+    id: ha_ev_travel_en
+    name: "Account for Calendar Travel Time"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:  { then: [ lambda: 'id(ev_takeover_travel_en) = true; id(force_redraw) = true;' ] }
+    on_turn_off: { then: [ lambda: 'id(ev_takeover_travel_en) = false; id(force_redraw) = true;' ] }
 
 datetime:
   - platform: template
@@ -214,6 +248,14 @@ datetime:
     initial_value: "08:30:00"
     on_value: { then: [ lambda: 'id(force_redraw) = true;' ] }
   - platform: template
+    id: ha_launchpad_nonschool_end_time
+    name: "Non-School Day Launchpad End Time"
+    type: time
+    optimistic: true
+    restore_value: true
+    initial_value: "10:30:00"
+    on_value: { then: [ lambda: 'id(force_redraw) = true;' ] }
+  - platform: template
     id: ha_countdown_date
     name: "Custom Countdown Date"
     type: date
@@ -225,6 +267,28 @@ number:
   - platform: template
     id: ha_launchpad_hide_delay
     name: "Keep Launchpad After School Time"
+    min_value: 0
+    max_value: 60
+    step: 5
+    unit_of_measurement: "min"
+    optimistic: true
+    restore_value: true
+    initial_value: 30
+    on_value: { then: [ lambda: 'id(force_redraw) = true;' ] }
+  - platform: template
+    id: ha_ev_before_min
+    name: "Event Countdown Before"
+    min_value: 5
+    max_value: 90
+    step: 5
+    unit_of_measurement: "min"
+    optimistic: true
+    restore_value: true
+    initial_value: 30
+    on_value: { then: [ lambda: 'id(force_redraw) = true;' ] }
+  - platform: template
+    id: ha_ev_after_min
+    name: "Event Keep After Start"
     min_value: 0
     max_value: 60
     step: 5
@@ -408,6 +472,13 @@ interval:
           id(launchpad_start_min) = (int)id(ha_launchpad_start_time).hour * 60 + (int)id(ha_launchpad_start_time).minute;
           id(school_leave_min) = (int)id(ha_school_leave_time).hour * 60 + (int)id(ha_school_leave_time).minute;
           id(launchpad_hide_delay_min) = (int)roundf(std::isnan(id(ha_launchpad_hide_delay).state) ? 30.0f : id(ha_launchpad_hide_delay).state);
+          id(launchpad_nonschool_end_min) = (int)id(ha_launchpad_nonschool_end_time).hour * 60 + (int)id(ha_launchpad_nonschool_end_time).minute;
+
+          std::string ev_src = id(ha_ev_takeover_source).current_option();
+          id(ev_takeover_source) = (ev_src == "Family Only") ? 1 : ((ev_src == "School Only") ? 2 : ((ev_src == "Both Calendars") ? 3 : 0));
+          id(ev_takeover_before_min) = (int)roundf(std::isnan(id(ha_ev_before_min).state) ? 30.0f : id(ha_ev_before_min).state);
+          id(ev_takeover_after_min) = (int)roundf(std::isnan(id(ha_ev_after_min).state) ? 30.0f : id(ha_ev_after_min).state);
+          id(ev_takeover_travel_en) = id(ha_ev_travel_en).state;
 
           id(active_cd_name) = id(ha_countdown_name).state;
           if (now.is_valid() && !id(active_cd_name).empty() && id(ha_countdown_date).year > 2020) {

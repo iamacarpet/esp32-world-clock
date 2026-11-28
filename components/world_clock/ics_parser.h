@@ -137,8 +137,12 @@ inline bool normalize_calendar_url(const char *raw, char *out, size_t cap) {
 
 struct TimedEvent {
   bool valid{false};
-  int minute_of_day{0};  // 0..1439
+  int minute_of_day{0};       // 0..1439 (event start minute)
+  int end_minute_of_day{-1};  // 0..1440 (event end minute today, or -1 if unspecified)
+  int travel_min{0};          // 0..180 (from X-APPLE-TRAVEL-DURATION or [travel:Xm])
+  bool quiet{false};          // true if [quiet]/[hide] tag present (skips Event Takeover)
   char title[44]{""};
+  char location[36]{""};
 };
 
 struct CountdownItem {
@@ -149,10 +153,11 @@ struct CountdownItem {
 };
 
 struct IcsFeedSummary {
+  static constexpr int kMaxTimedToday = 6;
   bool valid{false};
   int events_seen{0};
-  // Up to 2 sorted timed events today + 1 all-day event today + legacy primary today_title
-  TimedEvent today_timed[2]{};
+  // Up to 6 sorted timed events today + 1 all-day event today + legacy primary today_title
+  TimedEvent today_timed[kMaxTimedToday]{};
   char today_allday[44]{""};
   char today_title[48]{""};
   char tomorrow_title[48]{""};
@@ -171,6 +176,42 @@ struct IcsFeedSummary {
   uint64_t hol_mask{0};  // 64-day bitmask (d=0..62) so Family [holiday] + School INSET merge across feeds!
   int cur_dow_mon0{0};   // 0=Mon..6=Sun for cur_jdn_ (used when recomputing merged back-to-school)
 };
+
+// Autism-friendly "Now & Next" Event Countdown Takeover state (Band 2 takeover for timed events)
+struct EventTakeoverState {
+  bool active{false};
+  uint8_t phase{0};          // 0=inactive, 1=upcoming countdown, 2=travel/leave now, 3=happening now
+  uint32_t event_key{0};     // Deterministic non-zero key for one-tap Dismiss
+  int progress_pct{0};       // 0..100 visual progress bar
+  bool urgent_soon{false};   // <= 10 min until leave/start (soft amber visual cue)
+  std::string badge_text;    // "UP NEXT", "GET READY", "TIME TO LEAVE", "HAPPENING NOW"
+  std::string countdown_text;// "LEAVE IN 14 MIN", "STARTS IN 22 MIN", "STARTED 8 MIN AGO"
+  std::string event_title;   // Uppercase event name
+  std::string time_line;     // "4:00 PM - 5:00 PM"
+  std::string travel_line;   // "15m travel · Leave by 3:45 PM" (empty if no travel time)
+  std::string location_line; // Clean short venue name (empty if none)
+  std::string next_title;    // Primary "LATER TODAY · THEN" line (prioritises timed events)
+  std::string next_sub;      // Secondary "THEN" line (next timed, all-day, or tomorrow)
+};
+
+inline bool is_timed_event_expired(const TimedEvent &ev, int now_min) {
+  if (!ev.valid) return true;
+  if (ev.end_minute_of_day > ev.minute_of_day) {
+    return now_min >= ev.end_minute_of_day;
+  }
+  return (now_min - ev.minute_of_day) > 30;
+}
+
+inline uint32_t make_event_key(int start_min, const char *title) {
+  uint32_t h = 2166136261UL ^ (uint32_t)(start_min * 2654435761UL);
+  if (title != nullptr) {
+    for (const char *p = title; *p != '\0'; p++) {
+      h ^= (uint8_t)tolower((unsigned char)*p);
+      h *= 16777619UL;
+    }
+  }
+  return (h == 0) ? 1UL : h;
+}
 
 // Priority mode for resolving multiple concurrent calendar events:
 // 0 = Smart Auto (imminent timed -> today all-day -> priority countdown -> tomorrow -> auto school)
@@ -395,11 +436,12 @@ inline CalendarView build_calendar_view(const IcsFeedSummary &fam, const IcsFeed
     v.holiday_badge = b;
   }
 
-  // Merge up to 4 timed events today across BOTH Family & School calendars (sorted by start minute, Family wins ties)
-  TimedEvent merged_timed[4]{};
+  // Merge all timed events today across BOTH Family & School calendars (sorted by start minute, Family wins ties)
+  constexpr int kMergedCap = IcsFeedSummary::kMaxTimedToday * 2;
+  TimedEvent merged_timed[kMergedCap]{};
   int mt_n = 0;
   auto push_timed = [&](const TimedEvent &ev) {
-    if (!ev.valid || mt_n >= 4) return;
+    if (!ev.valid || mt_n >= kMergedCap) return;
     int pos = mt_n;
     while (pos > 0 && ev.minute_of_day < merged_timed[pos - 1].minute_of_day) {
       merged_timed[pos] = merged_timed[pos - 1];
@@ -408,16 +450,16 @@ inline CalendarView build_calendar_view(const IcsFeedSummary &fam, const IcsFeed
     merged_timed[pos] = ev;
     mt_n++;
   };
-  for (int i = 0; i < 2; i++) push_timed(fam.today_timed[i]);
-  for (int i = 0; i < 2; i++) push_timed(sch.today_timed[i]);
+  for (int i = 0; i < IcsFeedSummary::kMaxTimedToday; i++) push_timed(fam.today_timed[i]);
+  for (int i = 0; i < IcsFeedSummary::kMaxTimedToday; i++) push_timed(sch.today_timed[i]);
 
-  // Pick next upcoming timed event today (automatically expires 30m after start time!)
+  // Pick next upcoming/active timed events today (drops finished events dynamically as the day progresses!)
   std::string active_timed_str;
   std::string second_timed_str;
   bool imminent_timed = false;
   for (int i = 0; i < mt_n; i++) {
+    if (is_timed_event_expired(merged_timed[i], now_min)) continue;
     int diff = merged_timed[i].minute_of_day - now_min;
-    if (diff < -30) continue;  // Already finished/passed
     std::string nm = to_upper_ascii(merged_timed[i].title);
     char tb[64];
     if (active_timed_str.empty()) {
@@ -568,6 +610,213 @@ inline CalendarView build_calendar_view(const IcsFeedSummary &fam, const IcsFeed
   return v;
 }
 
+// Evaluates the Autism-Friendly "Now & Next" Event Countdown Takeover Board.
+// source_mode: 0=Off, 1=Family Only, 2=School Only, 3=Both Family & School.
+// Accounts for Apple Calendar X-APPLE-TRAVEL-DURATION (and [travel:Xm]), DTEND short-event caps,
+// back-to-back priority (upcoming/travel event beats lingering started event), and one-tap Dismiss.
+inline EventTakeoverState evaluate_event_takeover(const IcsFeedSummary &fam, const IcsFeedSummary &sch,
+                                                  int source_mode, int now_min, int before_min, int after_min,
+                                                  bool use_travel, bool use_24h, uint32_t dismissed_key) {
+  EventTakeoverState st;
+  if (source_mode <= 0) return st;
+
+  int b_min = std::clamp(before_min, 5, 180);
+  int a_min = std::clamp(after_min, 0, 120);
+
+  constexpr int kCap = IcsFeedSummary::kMaxTimedToday * 2;
+  TimedEvent pool[kCap]{};
+  int pn = 0;
+  auto push_sorted = [&](TimedEvent *arr, int &cnt, const TimedEvent &ev) {
+    if (!ev.valid || cnt >= kCap) return;
+    int pos = cnt;
+    while (pos > 0 && ev.minute_of_day < arr[pos - 1].minute_of_day) {
+      arr[pos] = arr[pos - 1];
+      pos--;
+    }
+    arr[pos] = ev;
+    cnt++;
+  };
+
+  if (source_mode == 1 || source_mode == 3) {
+    for (int i = 0; i < IcsFeedSummary::kMaxTimedToday; i++) {
+      if (fam.today_timed[i].valid && !fam.today_timed[i].quiet) push_sorted(pool, pn, fam.today_timed[i]);
+    }
+  }
+  if (source_mode == 2 || source_mode == 3) {
+    for (int i = 0; i < IcsFeedSummary::kMaxTimedToday; i++) {
+      if (sch.today_timed[i].valid && !sch.today_timed[i].quiet) push_sorted(pool, pn, sch.today_timed[i]);
+    }
+  }
+  if (pn == 0) return st;
+
+  // Select best active event: upcoming/leave phase (1/2) ALWAYS beats lingering post-start phase (3)
+  // so back-to-back events never miss the next transition!
+  int best_idx = -1;
+  uint8_t best_phase = 0;
+  int best_leave_m = 9999;
+  int best_start_m = -1;
+  uint32_t best_key = 0;
+
+  for (int i = 0; i < pn; i++) {
+    const auto &ev = pool[i];
+    uint32_t key = make_event_key(ev.minute_of_day, ev.title);
+    if (dismissed_key != 0 && key == dismissed_key) continue;
+
+    int trv = use_travel ? std::clamp(ev.travel_min, 0, 180) : 0;
+    int leave_m = std::max(0, ev.minute_of_day - trv);
+    int win_start = leave_m - b_min;
+    int after_end = ev.minute_of_day + a_min;
+    int win_end = (ev.end_minute_of_day > ev.minute_of_day) ? std::min(after_end, ev.end_minute_of_day) : after_end;
+
+    if (now_min < win_start || now_min >= win_end) continue;
+
+    uint8_t ph = 1;
+    if (now_min >= ev.minute_of_day) ph = 3;
+    else if (trv > 0 && now_min >= leave_m) ph = 2;
+    else ph = 1;
+
+    bool better = false;
+    if (best_idx < 0) {
+      better = true;
+    } else if (ph < 3 && best_phase == 3) {
+      better = true;  // Upcoming / Travel event beats lingering started event
+    } else if (ph < 3 && best_phase < 3) {
+      if (leave_m < best_leave_m || (leave_m == best_leave_m && ev.minute_of_day < best_start_m)) better = true;
+    } else if (ph == 3 && best_phase == 3) {
+      if (ev.minute_of_day > best_start_m) better = true;  // Most recently started event wins
+    }
+    if (better) {
+      best_idx = i;
+      best_phase = ph;
+      best_leave_m = leave_m;
+      best_start_m = ev.minute_of_day;
+      best_key = key;
+    }
+  }
+  if (best_idx < 0) return st;
+
+  const auto &act = pool[best_idx];
+  int trv = use_travel ? std::clamp(act.travel_min, 0, 180) : 0;
+  int leave_m = std::max(0, act.minute_of_day - trv);
+  int after_end = act.minute_of_day + a_min;
+  int win_end = (act.end_minute_of_day > act.minute_of_day) ? std::min(after_end, act.end_minute_of_day) : after_end;
+
+  st.active = true;
+  st.phase = best_phase;
+  st.event_key = best_key;
+  st.event_title = to_upper_ascii(act.title);
+
+  char cbuf[64];
+  if (best_phase == 1) {
+    int rem = leave_m - now_min;
+    st.urgent_soon = (rem <= 10);
+    st.badge_text = st.urgent_soon ? "GET READY" : "UP NEXT";
+    if (trv > 0) {
+      if (rem == 1) snprintf(cbuf, sizeof(cbuf), "LEAVE IN 1 MIN");
+      else snprintf(cbuf, sizeof(cbuf), "LEAVE IN %d MIN", rem);
+    } else {
+      if (rem == 1) snprintf(cbuf, sizeof(cbuf), "STARTS IN 1 MIN");
+      else snprintf(cbuf, sizeof(cbuf), "STARTS IN %d MIN", rem);
+    }
+    st.countdown_text = cbuf;
+    int span = std::max(5, b_min);
+    st.progress_pct = std::clamp((int)((span - rem) * 100 / span), 5, 98);
+  } else if (best_phase == 2) {
+    int to_start = act.minute_of_day - now_min;
+    st.urgent_soon = true;
+    st.badge_text = "TIME TO LEAVE";
+    if (to_start == 1) snprintf(cbuf, sizeof(cbuf), "LEAVE NOW · STARTS IN 1 MIN");
+    else snprintf(cbuf, sizeof(cbuf), "LEAVE NOW · STARTS IN %d MIN", to_start);
+    st.countdown_text = cbuf;
+    st.progress_pct = 100;
+  } else {
+    int ago = now_min - act.minute_of_day;
+    st.urgent_soon = false;
+    st.badge_text = "HAPPENING NOW";
+    if (ago <= 0) {
+      snprintf(cbuf, sizeof(cbuf), "STARTING RIGHT NOW!");
+    } else if (ago == 1) {
+      snprintf(cbuf, sizeof(cbuf), "STARTED 1 MIN AGO");
+    } else {
+      snprintf(cbuf, sizeof(cbuf), "STARTED %d MIN AGO", ago);
+    }
+    st.countdown_text = cbuf;
+    int dur = (act.end_minute_of_day > act.minute_of_day) ? (act.end_minute_of_day - act.minute_of_day)
+                                                          : std::max(1, win_end - act.minute_of_day);
+    st.progress_pct = std::clamp((int)(ago * 100 / std::max(1, dur)), 5, 100);
+  }
+
+  std::string start_s = format_short_time(act.minute_of_day / 60, act.minute_of_day % 60, use_24h);
+  if (act.end_minute_of_day > act.minute_of_day && act.end_minute_of_day < 1440) {
+    std::string end_s = format_short_time(act.end_minute_of_day / 60, act.end_minute_of_day % 60, use_24h);
+    st.time_line = start_s + " - " + end_s;
+  } else {
+    st.time_line = "Starts at " + start_s;
+  }
+
+  if (best_phase == 3) {
+    if (act.end_minute_of_day > now_min && act.end_minute_of_day < 1440) {
+      int left_m = act.end_minute_of_day - now_min;
+      std::string end_s = format_short_time(act.end_minute_of_day / 60, act.end_minute_of_day % 60, use_24h);
+      char tb[56];
+      if (left_m == 1) snprintf(tb, sizeof(tb), "1 min left · Finishes at %s", end_s.c_str());
+      else snprintf(tb, sizeof(tb), "%d min left · Finishes at %s", left_m, end_s.c_str());
+      st.travel_line = tb;
+    }
+  } else if (trv > 0) {
+    std::string lv_s = format_short_time(leave_m / 60, leave_m % 60, use_24h);
+    char tb[56];
+    snprintf(tb, sizeof(tb), "%dm travel · Leave by %s", trv, lv_s.c_str());
+    st.travel_line = tb;
+  }
+  if (act.location[0] != '\0') {
+    st.location_line = act.location;
+  }
+
+  // Build compact "LATER TODAY · THEN" preview (prioritises subsequent timed events across BOTH calendars!)
+  TimedEvent all_timed[kCap]{};
+  int an = 0;
+  for (int i = 0; i < IcsFeedSummary::kMaxTimedToday; i++) push_sorted(all_timed, an, fam.today_timed[i]);
+  for (int i = 0; i < IcsFeedSummary::kMaxTimedToday; i++) push_sorted(all_timed, an, sch.today_timed[i]);
+
+  for (int i = 0; i < an; i++) {
+    const auto &nx = all_timed[i];
+    if (nx.quiet || is_timed_event_expired(nx, now_min)) continue;
+    uint32_t nk = make_event_key(nx.minute_of_day, nx.title);
+    if (nk == best_key) continue;
+    if (nx.minute_of_day < act.minute_of_day) continue;
+    std::string nt = format_short_time(nx.minute_of_day / 60, nx.minute_of_day % 60, use_24h);
+    std::string line = nt + " · " + to_upper_ascii(nx.title);
+    if (st.next_title.empty()) {
+      st.next_title = line;
+    } else if (st.next_sub.empty()) {
+      st.next_sub = line;
+      break;
+    }
+  }
+
+  std::string allday = fam.today_allday[0] ? to_upper_ascii(fam.today_allday)
+                                           : (sch.today_allday[0] ? to_upper_ascii(sch.today_allday) : "");
+  const char *tmrw_raw = fam.tomorrow_title[0] ? fam.tomorrow_title : sch.tomorrow_title;
+  std::string tmrw = tmrw_raw[0] ? ("Tomorrow \u2192 " + to_upper_ascii(tmrw_raw)) : "";
+
+  if (st.next_title.empty()) {
+    if (!allday.empty() && allday != st.event_title) {
+      st.next_title = allday;
+      st.next_sub = tmrw;
+    } else if (!tmrw.empty()) {
+      st.next_title = tmrw;
+    } else {
+      st.next_title = "Free rest of the day!";
+    }
+  } else if (st.next_sub.empty()) {
+    if (!allday.empty() && allday != st.event_title) st.next_sub = "All day: " + allday;
+    else if (!tmrw.empty()) st.next_sub = tmrw;
+  }
+
+  return st;
+}
+
 // Zero-allocation streaming RFC 5545 (.ics) parser designed for Core 0 HTTP callbacks.
 // Handles multi-megabyte iCloud / Google / School feeds using < 2 KB of stack/member memory!
 class IcsStreamParser {
@@ -587,6 +836,7 @@ class IcsStreamParser {
   void reset() {
     saw_vcalendar_ = false;
     in_vevent_ = false;
+    in_valarm_ = false;
     has_pending_ = false;
     raw_len_ = 0;
     raw_line_[0] = '\0';
@@ -809,17 +1059,139 @@ class IcsStreamParser {
     while (n > 0 && buf[n - 1] == ' ') buf[--n] = '\0';
   }
 
-  void insert_timed_today_(int min_of_day, const char *title) {
+  // Parses ISO-8601 duration strings like "PT15M", "PT1H30M", "PT1800S", "P0DT20M" -> minutes (0..180).
+  static int parse_iso_duration_min(const char *val) {
+    if (val == nullptr) return 0;
+    const char *p = val;
+    while (*p == ' ' || *p == '+' || *p == '-') p++;
+    if (*p != 'P' && *p != 'p') return 0;
+    p++;
+    bool in_time = false;
+    int total_sec = 0;
+    while (*p != '\0' && *p != ';' && *p != ',') {
+      if (*p == 'T' || *p == 't') {
+        in_time = true;
+        p++;
+        continue;
+      }
+      if (!isdigit((unsigned char)*p)) {
+        p++;
+        continue;
+      }
+      int num = 0;
+      while (isdigit((unsigned char)*p)) {
+        num = num * 10 + (*p - '0');
+        if (num > 100000) num = 100000;
+        p++;
+      }
+      char u = (char)toupper((unsigned char)*p);
+      if (*p != '\0') p++;
+      if (!in_time && u == 'D') total_sec += num * 86400;
+      else if (in_time && u == 'H') total_sec += num * 3600;
+      else if (in_time && u == 'M') total_sec += num * 60;
+      else if (in_time && u == 'S') total_sec += num;
+    }
+    if (total_sec <= 0) return 0;
+    return std::clamp((total_sec + 30) / 60, 0, 180);
+  }
+
+  // Extracts optional manual [travel:15m] / [travel:1h] / [travel:1h15m] tag from a title and strips it cleanly.
+  static int extract_and_strip_travel_tag(char *buf) {
+    if (buf == nullptr) return 0;
+    for (char *p = buf; *p != '\0'; p++) {
+      if (strncasecmp(p, "[travel:", 8) == 0) {
+        char *q = p + 8;
+        int mins = 0;
+        while (*q != '\0' && *q != ']') {
+          while (*q == ' ') q++;
+          if (!isdigit((unsigned char)*q)) break;
+          int v = 0;
+          while (isdigit((unsigned char)*q)) {
+            v = v * 10 + (*q - '0');
+            if (v > 1000) v = 1000;
+            q++;
+          }
+          char u = (char)tolower((unsigned char)*q);
+          if (u == 'h') {
+            mins += v * 60;
+            q++;
+          } else if (u == 'm') {
+            mins += v;
+            q++;
+          } else {
+            mins += v;
+          }
+        }
+        if (*q == ']') {
+          memmove(p, q + 1, strlen(q + 1) + 1);
+          char *s = buf;
+          while (*s == ' ') s++;
+          if (s != buf) memmove(buf, s, strlen(s) + 1);
+          size_t n = strlen(buf);
+          while (n > 0 && buf[n - 1] == ' ') buf[--n] = '\0';
+          return std::clamp(mins, 0, 180);
+        }
+      }
+    }
+    return 0;
+  }
+
+  // Cleans an ICS LOCATION value down to a crisp short venue name (stops at first newline or comma).
+  static void clean_location(const char *src, char *dst, size_t cap) {
+    size_t w = 0;
+    for (size_t i = 0; src[i] != '\0' && w + 1 < cap; i++) {
+      if (src[i] == '\\' && src[i + 1] != '\0') {
+        char n = src[++i];
+        if (n == 'n' || n == 'N') break;  // Stop at street address line 2!
+        if (n == ',' && w >= 4) break;    // Stop at ", Town, Postcode"
+        if (n == ',') continue;
+        dst[w++] = n;
+        continue;
+      }
+      if (src[i] == ',' && w >= 4) break;
+      unsigned char uc = (unsigned char)src[i];
+      if (uc >= 32 && uc < 127) {
+        dst[w++] = (char)uc;
+      } else if (uc == 0xC2 || uc == 0xC3) {
+        if (src[i + 1] != '\0' && w + 2 < cap) {
+          dst[w++] = src[i++];
+          dst[w++] = src[i];
+        }
+      } else if (uc == 0xE2 && (unsigned char)src[i + 1] == 0x80 && src[i + 2] != '\0') {
+        unsigned char b2 = (unsigned char)src[i + 2];
+        if (b2 == 0x98 || b2 == 0x99) dst[w++] = '\'';
+        else if (b2 == 0x93 || b2 == 0x94) dst[w++] = '-';
+        i += 2;
+      }
+    }
+    while (w > 0 && dst[w - 1] == ' ') w--;
+    dst[w] = '\0';
+  }
+
+  void insert_timed_today_(int min_of_day, int end_min, int travel_min, bool quiet, const char *title,
+                           const char *location) {
     TimedEvent ev;
     ev.valid = true;
     ev.minute_of_day = min_of_day;
+    ev.end_minute_of_day = end_min;
+    ev.travel_min = std::clamp(travel_min, 0, 180);
+    ev.quiet = quiet;
     snprintf(ev.title, sizeof(ev.title), "%.43s", title);
-    if (!summary_.today_timed[0].valid || min_of_day < summary_.today_timed[0].minute_of_day) {
-      summary_.today_timed[1] = summary_.today_timed[0];
-      summary_.today_timed[0] = ev;
-    } else if (!summary_.today_timed[1].valid || min_of_day < summary_.today_timed[1].minute_of_day) {
-      summary_.today_timed[1] = ev;
+    if (location != nullptr && location[0] != '\0') {
+      snprintf(ev.location, sizeof(ev.location), "%.35s", location);
     }
+    int pos = IcsFeedSummary::kMaxTimedToday;
+    for (int i = 0; i < IcsFeedSummary::kMaxTimedToday; i++) {
+      if (!summary_.today_timed[i].valid || min_of_day < summary_.today_timed[i].minute_of_day) {
+        pos = i;
+        break;
+      }
+    }
+    if (pos >= IcsFeedSummary::kMaxTimedToday) return;
+    for (int j = IcsFeedSummary::kMaxTimedToday - 1; j > pos; j--) {
+      summary_.today_timed[j] = summary_.today_timed[j - 1];
+    }
+    summary_.today_timed[pos] = ev;
   }
 
   void insert_countdown_(int days_away, bool priority, const char *title) {
@@ -892,12 +1264,14 @@ class IcsStreamParser {
     ev_has_until_ = false;
     ev_cancelled_ = false;
     ev_exdate_n_ = 0;
+    ev_travel_min_ = 0;
     ev_sy_ = ev_sm_ = ev_sd_ = 0;
     ev_ey_ = ev_em_ = ev_ed_ = 0;
     ev_hr_ = ev_mn_ = 0;
     ev_ehr_ = ev_emn_ = 0;
     ev_until_jdn_ = 0;
     ev_summary_[0] = '\0';
+    ev_location_[0] = '\0';
   }
 
   void commit_event_() {
@@ -915,6 +1289,7 @@ class IcsStreamParser {
     }
 
     int64_t end_jdn_incl = start_jdn;
+    int end_min_today = -1;
     if (ev_has_end_) {
       int64_t ej = ymd_to_jdn(ev_ey_, ev_em_, ev_ed_);
       int ehr = ev_ehr_, emn = ev_emn_;
@@ -926,8 +1301,16 @@ class IcsStreamParser {
       } else if (ev_has_time_ && ej > start_jdn && ehr == 0 && emn == 0) {
         // Timed event ending cleanly at 00:00 of next day does not spill into next day
         end_jdn_incl = ej - 1;
+        end_min_today = 1440;
       } else if (ej >= start_jdn) {
         end_jdn_incl = ej;
+        if (ev_has_time_ && ev_end_has_time_) {
+          if (ej == start_jdn && (ehr * 60 + emn) > (hr * 60 + mn)) {
+            end_min_today = ehr * 60 + emn;
+          } else if (ej > start_jdn) {
+            end_min_today = 1440;
+          }
+        }
       }
     }
 
@@ -978,6 +1361,7 @@ class IcsStreamParser {
 
     bool is_tagged_countdown = icontains(ev_summary_, "countdown:") || icontains(ev_summary_, "[countdown]");
     bool is_tagged_noschool = icontains(ev_summary_, "[no school]") || icontains(ev_summary_, "[holiday]");
+    bool is_tagged_quiet = icontains(ev_summary_, "[quiet]") || icontains(ev_summary_, "[hide]");
 
     char display_sum[48];
     snprintf(display_sum, sizeof(display_sum), "%s", ev_summary_);
@@ -989,6 +1373,12 @@ class IcsStreamParser {
       strip_tag_ci(display_sum, "[no school]");
       strip_tag_ci(display_sum, "[holiday]");
     }
+    if (is_tagged_quiet) {
+      strip_tag_ci(display_sum, "[quiet]");
+      strip_tag_ci(display_sum, "[hide]");
+    }
+    int tag_travel = extract_and_strip_travel_tag(display_sum);
+    int eff_travel_min = (tag_travel > 0) ? tag_travel : ev_travel_min_;
     if (display_sum[0] == '\0') snprintf(display_sum, sizeof(display_sum), "%s", ev_summary_);
 
     // Only treat an event as timed today on its actual start day (prevents multi-day timed events
@@ -1027,7 +1417,7 @@ class IcsStreamParser {
 
     if (hits_today) {
       if (is_timed_today) {
-        insert_timed_today_(hr * 60 + mn, display_sum);
+        insert_timed_today_(hr * 60 + mn, end_min_today, eff_travel_min, is_tagged_quiet, display_sum, ev_location_);
       } else if (summary_.today_allday[0] == '\0') {
         snprintf(summary_.today_allday, sizeof(summary_.today_allday), "%.43s", display_sum);
       }
@@ -1056,15 +1446,25 @@ class IcsStreamParser {
     }
     if (strncmp(line, "BEGIN:VEVENT", 12) == 0) {
       in_vevent_ = true;
+      in_valarm_ = false;
       reset_event_();
       return;
     }
     if (strncmp(line, "END:VEVENT", 10) == 0) {
       if (in_vevent_) commit_event_();
       in_vevent_ = false;
+      in_valarm_ = false;
       return;
     }
-    if (!in_vevent_) return;
+    if (strncmp(line, "BEGIN:VALARM", 12) == 0) {
+      in_valarm_ = true;
+      return;
+    }
+    if (strncmp(line, "END:VALARM", 10) == 0) {
+      in_valarm_ = false;
+      return;
+    }
+    if (!in_vevent_ || in_valarm_) return;
 
     const char *colon = find_ics_value_colon(line);
     if (colon == nullptr) return;
@@ -1076,6 +1476,10 @@ class IcsStreamParser {
       ev_has_end_ = parse_ics_date(val, ev_ey_, ev_em_, ev_ed_, ev_end_has_time_, ev_ehr_, ev_emn_, ev_end_is_utc_);
     } else if (strncmp(line, "SUMMARY", 7) == 0 && (line[7] == ':' || line[7] == ';')) {
       clean_summary(val, ev_summary_, sizeof(ev_summary_));
+    } else if (strncmp(line, "LOCATION", 8) == 0 && (line[8] == ':' || line[8] == ';')) {
+      clean_location(val, ev_location_, sizeof(ev_location_));
+    } else if (strncmp(line, "X-APPLE-TRAVEL-DURATION", 23) == 0 && (line[23] == ':' || line[23] == ';')) {
+      ev_travel_min_ = parse_iso_duration_min(val);
     } else if (strncmp(line, "STATUS", 6) == 0 && (line[6] == ':' || line[6] == ';')) {
       if (icontains(val, "CANCELLED")) ev_cancelled_ = true;
     } else if (strncmp(line, "EXDATE", 6) == 0 && (line[6] == ':' || line[6] == ';')) {
@@ -1131,6 +1535,7 @@ class IcsStreamParser {
   int local_utc_offset_min_{0};
   bool saw_vcalendar_{false};
   bool in_vevent_{false};
+  bool in_valarm_{false};
   bool has_pending_{false};
   char raw_line_[256]{};
   size_t raw_len_{0};
@@ -1158,8 +1563,10 @@ class IcsStreamParser {
   static constexpr int kMaxExdates = 8;
   int64_t ev_exdates_[kMaxExdates]{};
   int ev_exdate_n_{0};
+  int ev_travel_min_{0};
   int64_t ev_until_jdn_{0};
   char ev_summary_[48]{};
+  char ev_location_[36]{};
 
   IcsFeedSummary summary_;
 };

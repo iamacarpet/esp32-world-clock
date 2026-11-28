@@ -581,6 +581,123 @@ int main() {
     assert(ex_hit.summary().today_timed[0].valid && std::string(ex_hit.summary().today_timed[0].title) == "Swimming Club");
   }
 
+  // 15. v1.4.0 Autism-Friendly "Now & Next" Event Countdown Takeover, iPhone Travel Time, VALARM guard & Busy Days
+  {
+    const char *busy_ics =
+        "BEGIN:VCALENDAR\r\n"
+        // Short 15-min morning event (09:00-09:15) -> expires cleanly at 09:15 (before 10:30 Launchpad end!)
+        "BEGIN:VEVENT\r\n"
+        "DTSTART:20261114T090000\r\n"
+        "DTEND:20261114T091500\r\n"
+        "SUMMARY:Quick Physio Check\r\n"
+        "END:VEVENT\r\n"
+        // Quiet adult event -> must NEVER trigger Event Takeover!
+        "BEGIN:VEVENT\r\n"
+        "DTSTART:20261114T110000\r\n"
+        "DTEND:20261114T120000\r\n"
+        "SUMMARY:Boiler Service [quiet]\r\n"
+        "END:VEVENT\r\n"
+        // Apple iPhone event with native X-APPLE-TRAVEL-DURATION (15m), multi-line LOCATION, and nested VALARM!
+        "BEGIN:VEVENT\r\n"
+        "DTSTART:20261114T160000\r\n"
+        "DTEND:20261114T170000\r\n"
+        "SUMMARY:Swimming Lesson\r\n"
+        "LOCATION:Leisure Centre\\nHigh Street, Town, AB1 2CD\r\n"
+        "X-APPLE-TRAVEL-DURATION;VALUE=DURATION:PT15M\r\n"
+        "BEGIN:VALARM\r\n"
+        "TRIGGER:-PT30M\r\n"
+        "SUMMARY:Alarm Should Not Overwrite Title\r\n"
+        "END:VALARM\r\n"
+        "END:VEVENT\r\n"
+        // Later timed event with manual [travel:20m] tag
+        "BEGIN:VEVENT\r\n"
+        "DTSTART:20261114T180000\r\n"
+        "DTEND:20261114T193000\r\n"
+        "SUMMARY:Dinner at Nana's [travel:20m]\r\n"
+        "END:VEVENT\r\n"
+        // Event 5 & 6 to verify >2 timed events per day are preserved
+        "BEGIN:VEVENT\r\n"
+        "DTSTART:20261114T194500\r\n"
+        "SUMMARY:Stargazing Walk\r\n"
+        "END:VEVENT\r\n"
+        "END:VCALENDAR\r\n";
+
+    IcsStreamParser fam_p(2026, 11, 14, false, 0);
+    fam_p.feed(busy_ics, strlen(busy_ics));
+    fam_p.finish();
+    const auto &fs = fam_p.summary();
+    assert(fs.today_timed[0].valid && std::string(fs.today_timed[0].title) == "Quick Physio Check");
+    assert(fs.today_timed[0].end_minute_of_day == 9 * 60 + 15);
+    assert(fs.today_timed[1].valid && fs.today_timed[1].quiet && std::string(fs.today_timed[1].title) == "Boiler Service");
+    assert(fs.today_timed[2].valid && std::string(fs.today_timed[2].title) == "Swimming Lesson");  // VALARM ignored!
+    assert(fs.today_timed[2].travel_min == 15);
+    assert(std::string(fs.today_timed[2].location) == "Leisure Centre");
+    assert(fs.today_timed[3].valid && fs.today_timed[3].travel_min == 20 &&
+           std::string(fs.today_timed[3].title) == "Dinner at Nana's");
+    assert(fs.today_timed[4].valid && std::string(fs.today_timed[4].title) == "Stargazing Walk");
+
+    IcsFeedSummary empty_sch{};
+
+    // Short event (09:00-09:15) stops showing at 09:15 even when after_min = 30!
+    auto ev_short_on = evaluate_event_takeover(fs, empty_sch, 1, 9 * 60 + 10, 30, 30, true, false, 0);
+    assert(ev_short_on.active && ev_short_on.phase == 3 && ev_short_on.countdown_text == "STARTED 10 MIN AGO");
+    auto ev_short_off = evaluate_event_takeover(fs, empty_sch, 1, 9 * 60 + 15, 30, 30, true, false, 0);
+    assert(!ev_short_off.active);
+
+    // Morning Launchpad view at 09:20 drops expired 09:00-09:15 Physio Check and shows upcoming events!
+    auto cv_sat = build_calendar_view(fs, empty_sch, false, true, 9 * 60 + 20, 0, 0, false, "", -1);
+    assert(cv_sat.plan_lines[0].find("PHYSIO") == std::string::npos);
+
+    // Quiet adult event at 11:00 must NOT trigger Event Takeover
+    auto ev_quiet = evaluate_event_takeover(fs, empty_sch, 1, 10 * 60 + 45, 30, 30, true, false, 0);
+    assert(!ev_quiet.active);
+
+    // Swimming at 16:00 with 15m travel -> Leave Time 15:45 -> 30m lead-in starts at 15:15!
+    auto ev_pre = evaluate_event_takeover(fs, empty_sch, 1, 15 * 60 + 14, 30, 30, true, false, 0);
+    assert(!ev_pre.active);
+    auto ev_up = evaluate_event_takeover(fs, empty_sch, 1, 15 * 60 + 31, 30, 30, true, false, 0);
+    assert(ev_up.active && ev_up.phase == 1 && ev_up.badge_text == "UP NEXT");
+    assert(ev_up.countdown_text == "LEAVE IN 14 MIN");
+    assert(ev_up.time_line == "4 PM - 5 PM");
+    assert(ev_up.travel_line == "15m travel · Leave by 3:45 PM");
+    assert(ev_up.location_line == "Leisure Centre");
+    assert(ev_up.next_title == "6 PM · DINNER AT NANA'S");
+
+    // Travel window (15:45..15:59): Phase 2 "TIME TO LEAVE"
+    auto ev_trv = evaluate_event_takeover(fs, empty_sch, 1, 15 * 60 + 49, 30, 30, true, false, 0);
+    assert(ev_trv.active && ev_trv.phase == 2 && ev_trv.badge_text == "TIME TO LEAVE");
+    assert(ev_trv.countdown_text == "LEAVE NOW · STARTS IN 11 MIN");
+
+    // Happening Now (16:08): Phase 3 "HAPPENING NOW" -> "STARTED 8 MIN AGO" + "52 min left · Finishes at 5 PM"
+    auto ev_now = evaluate_event_takeover(fs, empty_sch, 1, 16 * 60 + 8, 30, 30, true, false, 0);
+    assert(ev_now.active && ev_now.phase == 3 && ev_now.badge_text == "HAPPENING NOW");
+    assert(ev_now.countdown_text == "STARTED 8 MIN AGO");
+    assert(ev_now.travel_line == "52 min left · Finishes at 5 PM");
+
+    // Dismiss button suppresses ONLY the dismissed event key
+    auto ev_dis = evaluate_event_takeover(fs, empty_sch, 1, 16 * 60 + 8, 30, 30, true, false, ev_now.event_key);
+    assert(!ev_dis.active);
+
+    // School-only source ignores Family events; Both Calendars includes them
+    assert(!evaluate_event_takeover(fs, empty_sch, 2, 15 * 60 + 31, 30, 30, true, false, 0).active);
+    assert(evaluate_event_takeover(fs, empty_sch, 3, 15 * 60 + 31, 30, 30, true, false, 0).active);
+
+    // Back-to-back priority: at 19:20 (Dinner 18:00-19:30 is past after_min, OR let's test overlapping 10:00 + 10:45!)
+    IcsFeedSummary b2b{};
+    b2b.valid = true;
+    b2b.today_timed[0].valid = true;
+    b2b.today_timed[0].minute_of_day = 10 * 60;
+    b2b.today_timed[0].end_minute_of_day = 10 * 60 + 45;
+    snprintf(b2b.today_timed[0].title, sizeof(b2b.today_timed[0].title), "Music Class");
+    b2b.today_timed[1].valid = true;
+    b2b.today_timed[1].minute_of_day = 10 * 60 + 45;
+    b2b.today_timed[1].end_minute_of_day = 11 * 60 + 30;
+    snprintf(b2b.today_timed[1].title, sizeof(b2b.today_timed[1].title), "Park Playdate");
+    // At 10:20, Music Class is lingering in phase 3 (+20m) AND Park Playdate is in phase 1 (-25m) -> Park Playdate wins!
+    auto ev_b2b = evaluate_event_takeover(b2b, empty_sch, 1, 10 * 60 + 20, 30, 30, true, false, 0);
+    assert(ev_b2b.active && ev_b2b.phase == 1 && ev_b2b.event_title == "PARK PLAYDATE");
+  }
+
   printf("ALL CLOCK_MATH & ICS_PARSER UNIT TESTS PASSED!\n");
   return 0;
 }

@@ -89,10 +89,19 @@ globals:
   - { id: launchpad_start_min, type: int, restore_value: no, initial_value: '420' }
   - { id: school_leave_min, type: int, restore_value: no, initial_value: '510' }
   - { id: launchpad_hide_delay_min, type: int, restore_value: no, initial_value: '30' }
+  - { id: launchpad_nonschool_end_min, type: int, restore_value: no, initial_value: '630' }
   - { id: cal_prominent_active, type: bool, restore_value: no, initial_value: 'false' }
   - { id: cal_prominent_title, type: std::string, restore_value: no, initial_value: '""' }
   - { id: cal_prominent_sub, type: std::string, restore_value: no, initial_value: '""' }
   - { id: launchpad_visible, type: bool, restore_value: no, initial_value: 'false' }
+  # Autism-Friendly "Now & Next" Event Countdown Takeover State (defaults enabled by Standalone & ha_kids_calendar)
+  - { id: ev_takeover_source, type: int, restore_value: no, initial_value: '0' }
+  - { id: ev_takeover_before_min, type: int, restore_value: no, initial_value: '30' }
+  - { id: ev_takeover_after_min, type: int, restore_value: no, initial_value: '30' }
+  - { id: ev_takeover_travel_en, type: bool, restore_value: no, initial_value: 'true' }
+  - { id: ev_takeover_visible, type: bool, restore_value: no, initial_value: 'false' }
+  - { id: ev_active_key, type: uint32_t, restore_value: no, initial_value: '0' }
+  - { id: ev_dismissed_key, type: uint32_t, restore_value: no, initial_value: '0' }
   - { id: focus_end_ms, type: uint32_t, restore_value: no, initial_value: '0' }
   - { id: focus_total_ms, type: uint32_t, restore_value: no, initial_value: '0' }
   - { id: focus_is_break, type: bool, restore_value: no, initial_value: 'false' }
@@ -135,6 +144,7 @@ select:
       - "Star Wars Day"
       - "Morning Launchpad Preview"
       - "No-School Holiday Preview"
+      - "Event Countdown Preview"
       - "Focus Study Timer Preview"
     on_value:
       then:
@@ -264,6 +274,116 @@ script:
     mode: single
     then:
       - lambda: |-
+          auto now = id(clock_time).now();
+          std::string sel = id(occasion_select).current_option();
+          int now_m = now.is_valid() ? (now.hour * 60 + now.minute) : 946;
+
+          // 0. Autism-Friendly "Now & Next" Event Countdown Takeover (takes precedence over Morning Launchpad!)
+          if (id(ev_takeover_visible)) {
+            lv_obj_add_flag(id(launchpad_overlay), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(tracker_badge), LV_OBJ_FLAG_HIDDEN);
+            #if LVGL_VERSION_MAJOR >= 9
+              lv_obj_remove_flag(id(event_takeover_overlay), LV_OBJ_FLAG_HIDDEN);
+            #else
+              lv_obj_clear_flag(id(event_takeover_overlay), LV_OBJ_FLAG_HIDDEN);
+            #endif
+
+            bool preview_ev = (sel == "Event Countdown Preview");
+            world_clock::EventTakeoverState evs;
+            if (preview_ev) {
+              evs = world_clock::evaluate_event_takeover(
+                  id(fam_cal_summary), id(sch_cal_summary),
+                  std::max(1, id(ev_takeover_source)), now_m,
+                  id(ev_takeover_before_min), id(ev_takeover_after_min),
+                  id(ev_takeover_travel_en), id(use_24h_clock), 0);
+              if (!evs.active) {
+                world_clock::IcsFeedSummary pf{};
+                pf.valid = true;
+                pf.today_timed[0].valid = true;
+                pf.today_timed[0].minute_of_day = 16 * 60;
+                pf.today_timed[0].end_minute_of_day = 17 * 60;
+                pf.today_timed[0].travel_min = 15;
+                snprintf(pf.today_timed[0].title, sizeof(pf.today_timed[0].title), "Swimming Lesson");
+                snprintf(pf.today_timed[0].location, sizeof(pf.today_timed[0].location), "Leisure Centre");
+                pf.today_timed[1].valid = true;
+                pf.today_timed[1].minute_of_day = 18 * 60;
+                snprintf(pf.today_timed[1].title, sizeof(pf.today_timed[1].title), "Dinner at Nana's");
+                snprintf(pf.tomorrow_title, sizeof(pf.tomorrow_title), "Non-Uniform Day");
+                evs = world_clock::evaluate_event_takeover(
+                    pf, world_clock::IcsFeedSummary{}, 1, 15 * 60 + 31,
+                    30, 30, true, id(use_24h_clock), 0);
+              }
+            } else {
+              evs = world_clock::evaluate_event_takeover(
+                  id(fam_cal_summary), id(sch_cal_summary),
+                  id(ev_takeover_source), now_m,
+                  id(ev_takeover_before_min), id(ev_takeover_after_min),
+                  id(ev_takeover_travel_en), id(use_24h_clock), id(ev_dismissed_key));
+            }
+
+            // Calm, predictable phase colors (Indigo -> Soft Amber -> Warm Coral -> Calm Emerald)
+            uint32_t pill_bg = 0x1E1B4B, pill_bdr = 0x818CF8, pill_txt = 0xE0E7FF, bar_col = 0x818CF8;
+            uint32_t card_bdr = 0x3730A3, kicker_col = 0xA5B4FC;
+            const char *ico = "\U000F051B";  // mdi-timer-outline (stopwatch)
+            const char *kicker = "NOW & NEXT · CALENDAR COUNTDOWN";
+            if (evs.phase == 3) {
+              pill_bg = 0x063B2D; pill_bdr = 0x34D399; pill_txt = 0xA7F3D0; bar_col = 0x10B981;
+              card_bdr = 0x065F46; kicker_col = 0x6EE7B7;
+              ico = "\U000F040C";  // mdi-play-circle
+              kicker = "HAPPENING NOW · CALENDAR EVENT";
+            } else if (evs.phase == 2) {
+              pill_bg = 0x3B120C; pill_bdr = 0xFB7185; pill_txt = 0xFFE4E6; bar_col = 0xF97316;
+              card_bdr = 0x9A3412; kicker_col = 0xFDBA74;
+              ico = "\U000F010B";  // mdi-car
+              kicker = "TIME TO LEAVE · TRAVEL WINDOW";
+            } else if (evs.urgent_soon) {
+              pill_bg = 0x2E1A04; pill_bdr = 0xF59E0B; pill_txt = 0xFDE68A; bar_col = 0xF59E0B;
+              card_bdr = 0x92400E; kicker_col = 0xFCD34D;
+              ico = "\U000F00F0";  // mdi-calendar-clock
+              kicker = "GET READY · LEAVING SOON";
+            }
+
+            lv_obj_set_style_bg_color(id(ev_status_pill), lv_color_hex(pill_bg), 0);
+            lv_obj_set_style_border_color(id(ev_status_pill), lv_color_hex(pill_bdr), 0);
+            lv_obj_set_style_text_color(id(ev_status_icon), lv_color_hex(pill_txt), 0);
+            lv_obj_set_style_text_color(id(ev_status_lbl), lv_color_hex(pill_txt), 0);
+            lv_obj_set_style_bg_color(id(ev_progress_bar), lv_color_hex(bar_col), LV_PART_INDICATOR);
+            lv_obj_set_style_border_color(id(ev_hero_card), lv_color_hex(card_bdr), 0);
+            lv_obj_set_style_text_color(id(ev_hero_kicker), lv_color_hex(kicker_col), 0);
+
+            lv_label_set_text(id(ev_status_icon), ico);
+            lv_label_set_text(id(ev_status_lbl), evs.badge_text.c_str());
+            lv_obj_set_size(id(ev_status_pill), LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+            lv_label_set_text(id(ev_countdown_lbl), evs.countdown_text.c_str());
+            lv_bar_set_value(id(ev_progress_bar), evs.progress_pct, LV_ANIM_OFF);
+
+            lv_label_set_text(id(ev_hero_kicker), kicker);
+            lv_label_set_text(id(ev_hero_title), evs.event_title.c_str());
+            lv_label_set_text(id(ev_hero_time), evs.time_line.c_str());
+            lv_label_set_text(id(ev_hero_travel), evs.travel_line.c_str());
+            if (!evs.location_line.empty()) {
+              std::string loc_s = "@ " + evs.location_line;
+              lv_label_set_text(id(ev_hero_loc), loc_s.c_str());
+            } else {
+              lv_label_set_text(id(ev_hero_loc), "");
+            }
+
+            lv_label_set_text(id(ev_next_1), evs.next_title.c_str());
+            lv_label_set_text(id(ev_next_2), evs.next_sub.c_str());
+
+            float tc = id(cur_wx_temp), hi = id(cur_wx_high), lo = id(cur_wx_low);
+            if (std::isnan(hi) && id(tracked_yday) >= 0 && id(tracked_high) > -900.0f) {
+              hi = id(tracked_high);
+              lo = id(tracked_low);
+            }
+            auto prep = world_clock::build_day_prep_briefing(
+                id(cur_wx_cond), id(cur_wx_today_cond), tc, hi, lo, id(cur_wx_precip_pct), id(use_fahrenheit));
+            lv_label_set_text(id(ev_wx_line1), prep.headline.c_str());
+            lv_label_set_text(id(ev_wx_line2), prep.pack_hint.c_str());
+            return;
+          }
+          lv_obj_add_flag(id(event_takeover_overlay), LV_OBJ_FLAG_HIDDEN);
+
           if (!id(launchpad_visible)) {
             lv_obj_add_flag(id(launchpad_overlay), LV_OBJ_FLAG_HIDDEN);
             return;
@@ -275,11 +395,9 @@ script:
             lv_obj_clear_flag(id(launchpad_overlay), LV_OBJ_FLAG_HIDDEN);
           #endif
 
-          auto now = id(clock_time).now();
-          std::string sel = id(occasion_select).current_option();
           bool preview_school = (sel == "Morning Launchpad Preview");
           bool preview_hol = (sel == "No-School Holiday Preview");
-          int now_m = now.is_valid() ? (now.hour * 60 + now.minute) : 488;
+          now_m = now.is_valid() ? (now.hour * 60 + now.minute) : 488;
           int dow = now.is_valid() ? world_clock::ymd_dow_num(now.year, now.month, now.day_of_month) : 1;
           bool is_wknd = preview_school ? false : (dow == 0 || dow == 6);
           bool is_hol = preview_hol ? true : (preview_school ? false : (id(cal_school_holiday) || id(fam_cal_summary).today_is_school_holiday || id(sch_cal_summary).today_is_school_holiday));
@@ -438,7 +556,7 @@ interval:
               return;
             }
           }
-          if (__atomic_load_n(&id(ota_active), __ATOMIC_ACQUIRE) || !id(boot_complete) || id(bg_cache) == nullptr || id(launchpad_visible)) return;
+          if (__atomic_load_n(&id(ota_active), __ATOMIC_ACQUIRE) || !id(boot_complete) || id(bg_cache) == nullptr || id(launchpad_visible) || id(ev_takeover_visible)) return;
           auto utc = id(clock_time).utcnow();
           auto loc = id(clock_time).now();
           world_clock::SpriteFrameParams p;

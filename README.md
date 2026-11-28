@@ -32,16 +32,20 @@ Each phase can be enabled/disabled and customized independently (times, brightne
 | :---: | :---: |
 | ![Tooth Fairy Mode](docs/media/18_tooth_fairy_winddown.png) | ![Boot Screen with Sleep-Safe Red QR Code and Unique Login](docs/media/01_boot_splash.png) |
 
-### Family & School Calendars, Morning Launchpad & Multi-Age Study Desk
-Choose between **Subtle Ticker Only**, **Prominent Dock Card**, or **Morning Launchpad Takeover** (calm autism-friendly daily briefing with live Leave-for-School countdown, whole-day **Pack & Wear for Today** briefing — e.g. *"Dry Now · Rain Later (75%)!"* or *"Cool AM → Warm PM (↑23°C)"* — and automatic *"X SLEEPS TO HALF TERM!"* / *"X SLEEPS TO BACK TO SCHOOL"* badges), plus **Symmetric School-Night Bedtimes** (Friday/Saturday/pre-holiday late bedtime; Sunday night automatically reverts to early school-night bedtime!) and **Age & Visual Profiles (Ages 3–16+)** with a built-in **25m / 5m Focus Pomodoro Timer**:
+### Family & School Calendars, Morning Launchpad, "Now & Next" Event Countdown & Multi-Age Study Desk
+Defaulting to **Morning Launchpad Takeover** for kids profiles (with configurable **Start Time**, **School Leave Grace Window**, and extended **Non-School Day End Time** up to 10:30 AM for relaxed weekends/holidays!), plus an autism-friendly **Indigo/Violet "Now & Next" Event Countdown Takeover Board** for timed events with native **iPhone/iCloud Travel Time (`X-APPLE-TRAVEL-DURATION`)**, configurable before/after countdown windows, source filtering (`Family` / `School` / `Both`), compact **"Later Today · Then"** & **Weather Prep** cards, **Symmetric School-Night Bedtimes**, and **Age & Visual Profiles (Ages 3–16+)** with a built-in **25m / 5m Focus Pomodoro Timer**:
 
 | Calendar & Multi-Age Walkthrough (Animated) | Morning Launchpad — School Day & Leave Countdown |
 | :---: | :---: |
 | ![Calendar & Multi-Age Walkthrough](docs/media/video_12_calendar_morning.gif) | ![Morning Launchpad School Day](docs/media/19_calendar_morning_launchpad.png) |
 
-| Morning Launchpad — No-School Half Term & Back-to-School | Prominent Band 3 Calendar Dock Card (Imminent Countdown) |
+| Morning Launchpad — No-School Half Term & Back-to-School | Event Countdown Takeover — 15m iPhone Travel Time |
 | :---: | :---: |
-| ![Morning Launchpad No School Half Term](docs/media/20_calendar_no_school_holiday.png) | ![Prominent Calendar Dock Card](docs/media/21_calendar_prominent_dock.png) |
+| ![Morning Launchpad No School Half Term](docs/media/20_calendar_no_school_holiday.png) | ![Event Countdown Takeover](docs/media/23_event_countdown_takeover.png) |
+
+| Event Takeover — Happening Now (Started 8m Ago) | Prominent Band 3 Calendar Dock Card (Imminent Countdown) |
+| :---: | :---: |
+| ![Event Happening Now](docs/media/24_event_happening_now.png) | ![Prominent Calendar Dock Card](docs/media/21_calendar_prominent_dock.png) |
 
 | Teen & Study Desk Profile (24h Clock + Focus Pomodoro) | Subtle Calendar Ticker + Fog Weather + Imperial (`°F`) |
 | :---: | :---: |

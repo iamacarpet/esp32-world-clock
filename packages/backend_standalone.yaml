@@ -155,6 +155,7 @@ select:
               id(cfg_winddown_en).publish_state(false);
               id(cfg_sleep_en).publish_state(false);
               id(cfg_quiet_en).publish_state(false);
+              id(cfg_cal_style).publish_state("Subtle Ticker Only");
             } else if (x == "Little Explorer (3-6)") {
               id(minimal_teen_mode) = false;
               id(cfg_use_24h).publish_state(false);
@@ -163,6 +164,7 @@ select:
               id(cfg_sleep_en).publish_state(true);
               id(cfg_quiet_en).publish_state(true);
               id(cfg_sleep_stars_en).publish_state(true);
+              id(cfg_cal_style).publish_state("Morning Launchpad Takeover");
             } else {
               id(minimal_teen_mode) = false;
               id(cfg_use_24h).publish_state(false);
@@ -170,6 +172,7 @@ select:
               id(cfg_winddown_en).publish_state(true);
               id(cfg_sleep_en).publish_state(true);
               id(cfg_quiet_en).publish_state(true);
+              id(cfg_cal_style).publish_state("Morning Launchpad Takeover");
             }
             id(force_redraw) = true;
         - script.execute: save_prefs_debounced
@@ -195,7 +198,7 @@ select:
     name: "Calendar Display Style"
     optimistic: true
     restore_value: true
-    initial_option: "Subtle Ticker Only"
+    initial_option: "Morning Launchpad Takeover"
     options:
       - "Subtle Ticker Only"
       - "Prominent Dock Card"
@@ -207,6 +210,19 @@ select:
             id(cal_display_style) = (x == "Prominent Dock Card") ? 1 : ((x == "Morning Launchpad Takeover") ? 2 : 0);
             id(force_redraw) = true;
         - script.execute: save_prefs_debounced
+  - platform: template
+    id: cfg_ev_takeover_source
+    name: "Event Countdown Takeover Source"
+    optimistic: true
+    restore_value: true
+    initial_option: "Family Only"
+    options:
+      - "Off"
+      - "Family Only"
+      - "School Only"
+      - "Both Calendars"
+    web_server: { sorting_group_id: grp_calendar, sorting_weight: 31 }
+    on_value: { then: [ lambda: 'id(force_redraw) = true;', script.execute: save_prefs_debounced ] }
   - platform: template
     id: cfg_timezone
     name: "Timezone"
@@ -311,6 +327,15 @@ button:
         - lambda: |-
             id(focus_end_ms) = 0;
             id(focus_rem_01) = -1.0f;
+            id(force_redraw) = true;
+  - platform: template
+    name: "Dismiss Active Event Board"
+    id: dismiss_event_btn
+    web_server: { sorting_group_id: grp_calendar, sorting_weight: 35 }
+    on_press:
+      then:
+        - lambda: |-
+            if (id(ev_active_key) != 0) id(ev_dismissed_key) = id(ev_active_key);
             id(force_redraw) = true;
   - platform: restart
     name: "Restart Clock"
@@ -434,6 +459,15 @@ switch:
     on_turn_on:  { then: [ lambda: 'id(force_redraw) = true;', script.execute: save_prefs_debounced ] }
     on_turn_off: { then: [ lambda: 'id(force_redraw) = true;', script.execute: save_prefs_debounced ] }
 
+  - platform: template
+    id: cfg_ev_travel_en
+    name: "Account for Calendar Travel Time"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    web_server: { sorting_group_id: grp_calendar, sorting_weight: 34 }
+    on_turn_on:  { then: [ lambda: 'id(ev_takeover_travel_en) = true; id(force_redraw) = true;', script.execute: save_prefs_debounced ] }
+    on_turn_off: { then: [ lambda: 'id(ev_takeover_travel_en) = false; id(force_redraw) = true;', script.execute: save_prefs_debounced ] }
+
   # Occasion & Visual Feature Toggles
   - platform: template
     id: cfg_night_lights
@@ -543,6 +577,16 @@ datetime:
     on_value: { then: [ lambda: 'id(force_redraw) = true;', script.execute: save_prefs_debounced ] }
 
   - platform: template
+    id: cfg_launchpad_nonschool_end_time
+    name: "Non-School Day Launchpad End Time"
+    type: time
+    optimistic: true
+    restore_value: true
+    initial_value: "10:30:00"
+    web_server: { sorting_group_id: grp_calendar, sorting_weight: 30 }
+    on_value: { then: [ lambda: 'id(force_redraw) = true;', script.execute: save_prefs_debounced ] }
+
+  - platform: template
     id: cfg_countdown_date
     name: "Custom Countdown Date"
     type: date
@@ -565,6 +609,34 @@ number:
     restore_value: true
     initial_value: 30
     web_server: { sorting_group_id: grp_calendar, sorting_weight: 29 }
+    on_value: { then: [ lambda: 'id(force_redraw) = true;', script.execute: save_prefs_debounced ] }
+
+  - platform: template
+    id: cfg_ev_before_min
+    name: "Event Countdown Before"
+    mode: slider
+    min_value: 5
+    max_value: 90
+    step: 5
+    unit_of_measurement: "min"
+    optimistic: true
+    restore_value: true
+    initial_value: 30
+    web_server: { sorting_group_id: grp_calendar, sorting_weight: 32 }
+    on_value: { then: [ lambda: 'id(force_redraw) = true;', script.execute: save_prefs_debounced ] }
+
+  - platform: template
+    id: cfg_ev_after_min
+    name: "Event Keep After Start"
+    mode: slider
+    min_value: 0
+    max_value: 60
+    step: 5
+    unit_of_measurement: "min"
+    optimistic: true
+    restore_value: true
+    initial_value: 30
+    web_server: { sorting_group_id: grp_calendar, sorting_weight: 33 }
     on_value: { then: [ lambda: 'id(force_redraw) = true;', script.execute: save_prefs_debounced ] }
 
   - platform: template
@@ -1136,6 +1208,12 @@ interval:
           id(launchpad_start_min) = (int)id(cfg_launchpad_start_time).hour * 60 + (int)id(cfg_launchpad_start_time).minute;
           id(school_leave_min) = (int)id(cfg_school_leave_time).hour * 60 + (int)id(cfg_school_leave_time).minute;
           id(launchpad_hide_delay_min) = (int)roundf(std::isnan(id(cfg_launchpad_hide_delay).state) ? 30.0f : id(cfg_launchpad_hide_delay).state);
+          id(launchpad_nonschool_end_min) = (int)id(cfg_launchpad_nonschool_end_time).hour * 60 + (int)id(cfg_launchpad_nonschool_end_time).minute;
+          std::string ev_src = id(cfg_ev_takeover_source).current_option();
+          id(ev_takeover_source) = (ev_src == "Family Only") ? 1 : ((ev_src == "School Only") ? 2 : ((ev_src == "Both Calendars") ? 3 : 0));
+          id(ev_takeover_before_min) = (int)roundf(std::isnan(id(cfg_ev_before_min).state) ? 30.0f : id(cfg_ev_before_min).state);
+          id(ev_takeover_after_min) = (int)roundf(std::isnan(id(cfg_ev_after_min).state) ? 30.0f : id(cfg_ev_after_min).state);
+          id(ev_takeover_travel_en) = id(cfg_ev_travel_en).state;
 
           // 3. Rollover-Safe Boot Splash State Machine (Connecting -> AP Ready -> SNTP -> Info Hold -> Live)
           bool wifi_ok = id(wifi_conn).is_connected();
@@ -1364,7 +1442,7 @@ interval:
             slp = 2; mode = 0;
           } else if (sel == "Wind-Down Preview (Amber)") {
             slp = 3; mode = (now.is_valid() && now.month == 12 && now.day_of_month == 24) ? 4 : 0; rem_stars = 0.75f;
-          } else if (sel == "Morning Launchpad Preview" || sel == "No-School Holiday Preview" || sel == "Focus Study Timer Preview") {
+          } else if (sel == "Morning Launchpad Preview" || sel == "No-School Holiday Preview" || sel == "Event Countdown Preview" || sel == "Focus Study Timer Preview") {
             slp = 0; mode = id(cfg_iss_en).state ? 1 : 0;
           } else if (sel != "Auto") {
             slp = 0;
@@ -1447,17 +1525,38 @@ interval:
             if (id(focus_rem_01) >= 0.0f) { id(focus_rem_01) = -1.0f; s_last_focus_stars = -1; dock_stars_dirty = true; }
           }
 
-          // Morning Launchpad Takeover respects Sleep/Quiet Play (slp == 0), starts at Launchpad Start Time,
-          // and stays visible for `launchpad_hide_delay_min` minutes past Leave for School Time (e.g. 08:30 + 30m = 09:00!)
-          bool has_today_ev = id(fam_cal_summary).today_timed[0].valid || (id(fam_cal_summary).today_allday[0] != '\0') ||
-                              id(sch_cal_summary).today_timed[0].valid || (id(sch_cal_summary).today_allday[0] != '\0') ||
-                              !id(parent_note_text).empty();
+          // 1. Autism-Friendly "Now & Next" Event Countdown Takeover (Daytime only; takes precedence over Morning Launchpad!)
+          auto ev_st = world_clock::evaluate_event_takeover(
+              id(fam_cal_summary), id(sch_cal_summary),
+              id(ev_takeover_source), cur_min,
+              id(ev_takeover_before_min), id(ev_takeover_after_min),
+              id(ev_takeover_travel_en), use24, id(ev_dismissed_key));
+          id(ev_active_key) = ev_st.active ? ev_st.event_key : 0;
+          if (!ev_st.active && id(ev_dismissed_key) != 0) {
+            auto ev_raw = world_clock::evaluate_event_takeover(
+                id(fam_cal_summary), id(sch_cal_summary),
+                id(ev_takeover_source), cur_min,
+                id(ev_takeover_before_min), id(ev_takeover_after_min),
+                id(ev_takeover_travel_en), use24, 0);
+            if (!ev_raw.active || ev_raw.event_key != id(ev_dismissed_key)) id(ev_dismissed_key) = 0;
+          }
+          bool auto_ev = (slp == 0) && (mode <= 1 || mode == 3) && now.is_valid() && ev_st.active;
+          bool want_ev = auto_ev || (sel == "Event Countdown Preview");
+          if (want_ev != id(ev_takeover_visible)) {
+            id(ev_takeover_visible) = want_ev;
+            if (!want_ev) id(badge_mode_applied) = 255;
+          }
+
+          // 2. Morning Launchpad Takeover respects Sleep/Quiet Play (slp == 0), starts at Launchpad Start Time,
+          // stays visible for `launchpad_hide_delay_min` past School Leave Time on school days,
+          // and stays open until `launchpad_nonschool_end_min` (e.g. 10:30 AM) on weekends & school holidays!
           int lp_start_m = id(launchpad_start_min);
-          int lp_end_m = id(school_leave_min) + std::clamp(id(launchpad_hide_delay_min), 0, 120);
-          bool auto_lp = (id(cal_display_style) == 2) && (slp == 0) && (mode <= 1 || mode == 3) &&
-                         now.is_valid() && (cur_min >= lp_start_m && cur_min <= lp_end_m) &&
-                         (!is_weekend || has_today_ev);
-          bool want_lp = auto_lp || (sel == "Morning Launchpad Preview") || (sel == "No-School Holiday Preview");
+          int lp_school_end_m = id(school_leave_min) + std::clamp(id(launchpad_hide_delay_min), 0, 120);
+          bool is_non_school_day = is_weekend || id(cal_school_holiday);
+          int lp_end_m = is_non_school_day ? id(launchpad_nonschool_end_min) : lp_school_end_m;
+          bool auto_lp = !want_ev && (id(cal_display_style) == 2) && (slp == 0) && (mode <= 1 || mode == 3) &&
+                         now.is_valid() && (lp_end_m >= lp_start_m) && (cur_min >= lp_start_m && cur_min <= lp_end_m);
+          bool want_lp = !want_ev && (auto_lp || (sel == "Morning Launchpad Preview") || (sel == "No-School Holiday Preview"));
           if (want_lp != id(launchpad_visible)) {
             id(launchpad_visible) = want_lp;
             if (!want_lp) id(badge_mode_applied) = 255;

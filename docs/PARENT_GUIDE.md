@@ -28,18 +28,30 @@ Instead of opening the clock's settings every week, you can link your existing *
 ### Choose Your Calendar Display Style
 Pick how prominent you want your calendar to look under **Calendar Display Style**:
 
-1. **Subtle Ticker Only** *(Default)* — Keeps the full live World Map & 3-day forecast visible, rotating calm calendar headlines along the top ticker (`"SCHOOL DAY · SWIMMING LESSON (4 PM)"`).
-2. **Prominent Dock Card** — Keeps the full World Map & ISS visible, while turning the bottom-right dock card into a clean **"TODAY'S PLAN"** card with a live countdown for timed events (`"SWIMMING LESSON IN 25 MIN!"`):
-   ![Prominent Calendar Dock Card](media/21_calendar_prominent_dock.png)
-3. **Morning Launchpad Takeover** *(Autism-Friendly School Morning Mode)* — Starts at your **Morning Launchpad Start Time** (default `07:00`, and automatically waits until Wake-Up if Sleep/Quiet Play is still active!) and stays on for your **Keep Launchpad After School Time** grace window (default `30 min` past `Leave for School Time`, e.g. `08:30 → 09:00` for busy mornings!), automatically skipped on quiet weekends with no scheduled events:
+1. **Morning Launchpad Takeover** *(Default for Kids Profiles — Autism-Friendly Morning Overview)* — Starts at your **Morning Launchpad Start Time** (default `07:00`, and automatically waits until Wake-Up if Sleep/Quiet Play is still active!). On school days it stays on for your **Keep Launchpad After School Time** grace window (default `30 min` past `Leave for School Time`, e.g. `08:30 → 09:00` for busy mornings!). On **weekends & school holidays**, it stays open until your **Non-School Day Launchpad End Time** (default `10:30 AM`) so slow weekend mornings still show today's calm overview — automatically dropping expired timed events as the morning progresses!
    - Top **School Day** (teal) or **No School · Half Term** (warm amber) badge + live **"LEAVE FOR SCHOOL IN 22 MIN"** progress bar
-   - **Today's Plan & Routine** (Parent Note, timed events, all-day items like PE Kit, and Tomorrow heads-up)
+   - **Today's Plan & Routine** (Parent Note, upcoming timed events, all-day items like PE Kit, and Tomorrow heads-up)
    - **Pack & Wear for Today (Whole-Day Briefing)** — Looks ahead at the **full day's forecast** rather than repeating the current weather below it: warns *"Dry Now · Rain Later (75%)! → Pack Warm Raincoat & Umbrella"* when rain is due by pickup, or *"Cool AM → Warm PM (↑23°C) → Layers: Jumper Now, T-Shirt Later"* on big morning-to-afternoon temperature swings!
    - **Automatic Holiday & Back-to-School Badge**: counts down **"8 SLEEPS TO HALF TERM!"** during term time and **"5 SLEEPS TO BACK TO SCHOOL"** during school holidays (automatically skipping Sat/Sun weekends!)
+2. **Prominent Dock Card** — Keeps the full World Map & ISS visible, while turning the bottom-right dock card into a clean **"TODAY'S PLAN"** card with a live countdown for timed events (`"SWIMMING LESSON IN 25 MIN!"`):
+   ![Prominent Calendar Dock Card](media/21_calendar_prominent_dock.png)
+3. **Subtle Ticker Only** *(Default for Teen & Study Desk)* — Keeps the full live World Map & 3-day forecast visible, rotating calm calendar headlines along the top ticker (`"SCHOOL DAY · SWIMMING LESSON (4 PM)"`).
 
 | School Day Morning Launchpad | Half Term No-School Launchpad |
 | :---: | :---: |
 | ![Morning Launchpad School Day](media/19_calendar_morning_launchpad.png) | ![Morning Launchpad No School Half Term](media/20_calendar_no_school_holiday.png) |
+
+### Autism-Friendly "Now & Next" Event Countdown Takeover (iPhone Travel Time Ready!)
+Whenever a timed event approaches during daytime, the clock automatically switches Band 2 to a visually distinct **Indigo / Violet "Now & Next" Countdown Board** (immediately distinguishable at a glance from the teal/amber Morning Launchpad!):
+- **Configurable Calendar Source** (`Event Countdown Takeover Source`): Choose **Off**, **Family Only** *(default)*, **School Only**, or **Both Calendars**.
+- **Configurable Lead-In & Post-Start Windows**: Shows **30 minutes before** (configurable `5–90 min`) and stays visible **30 minutes after start** (configurable `0–60 min`, automatically stopping early if a shorter event's `DTEND` finishes sooner!).
+- **Native iPhone / iCloud Travel Time Support**: Automatically reads Apple Calendar's `X-APPLE-TRAVEL-DURATION` (or manual `[travel:15m]` tags for Google/School calendars!) and counts down to **Leave Time** first (`"LEAVE IN 14 MIN · 15m travel · Leave by 3:45 PM"`), switches to a calm coral **`TIME TO LEAVE`** window during travel (`"LEAVE NOW · STARTS IN 11 MIN"`), and transitions to a calm emerald **`HAPPENING NOW`** state (`"STARTED 8 MIN AGO"`).
+- **Compact "Later Today · Then" + Weather Prep**: Keeps the focus on the single event in the wide hero card (with venue/location if set), paired with a smaller right-hand **"Later Today · Then"** preview (prioritising subsequent timed events) and **"Weather Prep"** reminder.
+- **One-Tap Dismiss & Quiet Opt-Out**: Tap **Dismiss Active Event Board** in Home Assistant or Web UI to clear just the current event, or add `[quiet]` / `[hide]` to any adult calendar entry so it never takes over your child's screen.
+
+| Event Countdown Takeover (15m Travel Time) | Event Takeover — Happening Now (Started 8m Ago) |
+| :---: | :---: |
+| ![Event Countdown Takeover](media/23_event_countdown_takeover.png) | ![Event Happening Now](media/24_event_happening_now.png) |
 
 ### Multi-Event Priority Engine (`Calendar Priority Mode`)
 What happens when you have a timed event today, an all-day event today, AND multiple countdowns running at once?
@@ -65,6 +77,8 @@ What happens when you have a timed event today, an all-day event today, AND mult
 ### Helpful Event Tags You Can Use Right in Apple/Google Calendar
 - **`Countdown:` or `[countdown]`** *(up to 90 days ahead!)* — e.g. `Countdown: Cornwall Holiday` or `Disney Trip [countdown]`. The clock strips the tag cleanly and prioritizes up to 2 concurrent countdowns (`"42 SLEEPS TO CORNWALL HOLIDAY!"`).
 - **`[no school]` or `[holiday]`** — Add this to any Family Calendar event (or link your School's `.ics` feed, which auto-detects *Holiday, Half Term, Inset, Training Day, Teacher Day, Closed, Bank Holiday, No School*) to trigger **NO SCHOOL** badges, **Morning Lie-In**, and **Non-School Night Late Bedtime** automatically!
+- **`[travel:15m]`** — Optional manual travel-time tag for Google Calendar or school events (Apple iPhone Calendar's built-in **Travel Time** field is read automatically with no tag needed!).
+- **`[quiet]` or `[hide]`** — Prevents background/adult timed events (e.g., `Boiler Service [quiet]`) from triggering the full-screen Event Countdown Takeover Board.
 
 ### Step-by-Step: Getting Your Calendar Link
 

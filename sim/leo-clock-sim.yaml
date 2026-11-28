@@ -688,6 +688,55 @@ script:
       - script.wait: sim_flush
       - snapshot.take: { id: main_display, filename: "22_teen_focus_pomodoro.bmp" }
 
+      # 23. v1.4 Autism-Friendly "Now & Next" Event Countdown Takeover (Upcoming with 15m iPhone Travel Time!)
+      - lambda: |-
+          id(use_24h_clock) = false;
+          id(focus_rem_01) = -1.0f;
+          id(cal_prominent_active) = false;
+          id(launchpad_visible) = false;
+          id(cur_wx_temp) = 11.0f;
+          id(cur_wx_feels) = 9.0f;
+          id(cur_wx_high) = 13.0f;
+          id(cur_wx_low) = 6.0f;
+          id(cur_wx_cond) = "partlycloudy";
+          id(cur_wx_today_cond) = "rainy";
+          id(cur_wx_precip_pct) = 75;
+          id(fam_cal_summary) = world_clock::IcsFeedSummary{};
+          id(sch_cal_summary) = world_clock::IcsFeedSummary{};
+          id(fam_cal_summary).valid = true;
+          id(fam_cal_summary).today_timed[0].valid = true;
+          id(fam_cal_summary).today_timed[0].minute_of_day = 16 * 60;
+          id(fam_cal_summary).today_timed[0].end_minute_of_day = 17 * 60;
+          id(fam_cal_summary).today_timed[0].travel_min = 15;
+          snprintf(id(fam_cal_summary).today_timed[0].title, sizeof(id(fam_cal_summary).today_timed[0].title), "Swimming Lesson");
+          snprintf(id(fam_cal_summary).today_timed[0].location, sizeof(id(fam_cal_summary).today_timed[0].location), "Leisure Centre");
+          id(fam_cal_summary).today_timed[1].valid = true;
+          id(fam_cal_summary).today_timed[1].minute_of_day = 18 * 60;
+          snprintf(id(fam_cal_summary).today_timed[1].title, sizeof(id(fam_cal_summary).today_timed[1].title), "Dinner at Nana's");
+          snprintf(id(fam_cal_summary).tomorrow_title, sizeof(id(fam_cal_summary).tomorrow_title), "Non-Uniform Day");
+          id(ev_takeover_source) = 1;
+          id(ev_takeover_before_min) = 30;
+          id(ev_takeover_after_min) = 30;
+          id(ev_takeover_travel_en) = true;
+          id(ev_dismissed_key) = 0;
+          id(ev_takeover_visible) = true;
+          id(clock_time).set_epoch(1794497460, 1.0);  // Thu 12 Nov 2026 15:31:00 GMT (Leave in 14 min!)
+          id(force_redraw) = true;
+      - script.execute: sim_flush
+      - script.wait: sim_flush
+      - snapshot.take: { id: main_display, filename: "23_event_countdown_takeover.bmp" }
+
+      # 24. v1.4 Event Takeover — Happening Now Phase (Calm Emerald Green · Started 8 Min Ago!)
+      - lambda: |-
+          id(clock_time).set_epoch(1794499680, 1.0);  // Thu 12 Nov 2026 16:08:00 GMT (Started 8 min ago!)
+          id(force_redraw) = true;
+      - script.execute: sim_flush
+      - script.wait: sim_flush
+      - snapshot.take: { id: main_display, filename: "24_event_happening_now.bmp" }
+      - lambda: |-
+          id(ev_takeover_visible) = false;
+          id(badge_mode_applied) = 255;
+
       # Video 12: Calendar Display Styles & Multi-Age Walkthrough (Launchpad -> Half Term -> Prominent Dock -> Focus Pomodoro!)
       - lambda: |-
           id(use_24h_clock) = false;

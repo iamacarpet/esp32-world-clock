@@ -85,3 +85,8 @@ font:
       - "\U000F1903" # mdi-home-lightning-bolt (Home Load)
       - "\U000F0079" # mdi-battery (Battery)
       - "\U000F0D3E" # mdi-transmission-tower (Grid)
+      - "\U000F00F0" # mdi-calendar-clock (Event Countdown)
+      - "\U000F051B" # mdi-timer-outline (Stopwatch)
+      - "\U000F010B" # mdi-car (Travel Time / Leave Now)
+      - "\U000F040C" # mdi-play-circle (Happening Now)
+      - "\U000F034E" # mdi-map-marker (Event Location)

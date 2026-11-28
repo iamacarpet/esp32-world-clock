@@ -423,3 +423,220 @@ lvgl:
                               text: "8 SLEEPS TO HALF TERM!"
                               text_font: font_fira_sm
                               text_color: 0xFCD34D
+
+        # Autism-Friendly "Now & Next" Event Countdown Takeover Board (visually distinct Indigo/Violet theme)
+        - obj:
+            id: event_takeover_overlay
+            x: 0
+            y: 74
+            width: 800
+            height: 322
+            bg_color: 0x060711
+            bg_opa: COVER
+            border_width: 0
+            radius: 0
+            pad_all: 0
+            hidden: true
+            scrollbar_mode: "OFF"
+            widgets:
+              - obj:
+                  id: ev_status_pill
+                  x: 24
+                  y: 14
+                  radius: 8
+                  bg_color: 0x1E1B4B
+                  bg_opa: COVER
+                  border_width: 1
+                  border_color: 0x818CF8
+                  pad_left: 10
+                  pad_right: 12
+                  pad_top: 4
+                  pad_bottom: 4
+                  scrollbar_mode: "OFF"
+                  layout:
+                    type: FLEX
+                    flex_flow: ROW
+                    flex_align_main: CENTER
+                    flex_align_cross: CENTER
+                    pad_column: 8
+                  widgets:
+                    - label:
+                        id: ev_status_icon
+                        text: "\U000F051B"
+                        text_font: font_icon_sm
+                        text_color: 0xC7D2FE
+                    - label:
+                        id: ev_status_lbl
+                        text: "UP NEXT"
+                        text_font: font_fira_sm
+                        text_color: 0xE0E7FF
+              - label:
+                  id: ev_countdown_lbl
+                  align: TOP_RIGHT
+                  x: -24
+                  y: 18
+                  text: "LEAVE IN 14 MIN"
+                  text_font: font_date
+                  text_color: 0xFFF6EA
+              - bar:
+                  id: ev_progress_bar
+                  x: 24
+                  y: 60
+                  width: 752
+                  height: 10
+                  min_value: 0
+                  max_value: 100
+                  value: 55
+                  radius: 5
+                  bg_color: 0x17182B
+                  bg_opa: COVER
+                  indicator:
+                    bg_color: 0x818CF8
+                    bg_opa: COVER
+                    radius: 5
+              # Wide Left Hero Card: Single Focus Event ("NOW / UP NEXT")
+              - obj:
+                  id: ev_hero_card
+                  x: 24
+                  y: 84
+                  width: 452
+                  height: 220
+                  radius: 14
+                  bg_color: 0x0E1022
+                  bg_opa: COVER
+                  border_width: 2
+                  border_color: 0x3730A3
+                  pad_all: 0
+                  scrollbar_mode: "OFF"
+                  widgets:
+                    - label:
+                        id: ev_hero_kicker
+                        x: 20
+                        y: 15
+                        text: "NOW & NEXT · CALENDAR COUNTDOWN"
+                        text_font: font_fira_xs
+                        text_color: 0xA5B4FC
+                    - label:
+                        id: ev_hero_title
+                        x: 20
+                        y: 44
+                        width: 412
+                        height: 66
+                        long_mode: WRAP
+                        text: "SWIMMING LESSON"
+                        text_font: font_splash_lg
+                        text_color: 0xFFF6EA
+                    - label:
+                        id: ev_hero_time
+                        x: 20
+                        y: 122
+                        width: 412
+                        height: 22
+                        long_mode: DOT
+                        text: "4:00 PM - 5:00 PM"
+                        text_font: font_card_title
+                        text_color: 0xE0E7FF
+                    - label:
+                        id: ev_hero_travel
+                        x: 20
+                        y: 154
+                        width: 412
+                        height: 20
+                        long_mode: DOT
+                        text: "15m travel · Leave by 3:45 PM"
+                        text_font: font_fira_sm
+                        text_color: 0xFCD34D
+                    - label:
+                        id: ev_hero_loc
+                        x: 20
+                        y: 184
+                        width: 412
+                        height: 19
+                        long_mode: DOT
+                        text: "@ Leisure Centre"
+                        text_font: font_card_sub
+                        text_color: 0x94A3B8
+              # Right Column Top Mini-Card: Compact "LATER TODAY · THEN" Preview (Prioritises Timed Events!)
+              - obj:
+                  id: ev_next_card
+                  x: 492
+                  y: 84
+                  width: 284
+                  height: 112
+                  radius: 14
+                  bg_color: 0x0D111C
+                  bg_opa: COVER
+                  border_width: 1
+                  border_color: 0x262C40
+                  pad_all: 0
+                  scrollbar_mode: "OFF"
+                  widgets:
+                    - label:
+                        id: ev_next_kicker
+                        x: 16
+                        y: 12
+                        text: "LATER TODAY · THEN"
+                        text_font: font_fira_xs
+                        text_color: 0xA5B4FC
+                    - label:
+                        id: ev_next_1
+                        x: 16
+                        y: 36
+                        width: 252
+                        height: 40
+                        long_mode: WRAP
+                        text: "6:00 PM · DINNER AT NANA'S"
+                        text_font: font_fira_sm
+                        text_color: 0xFFF6EA
+                    - label:
+                        id: ev_next_2
+                        x: 16
+                        y: 82
+                        width: 252
+                        height: 19
+                        long_mode: DOT
+                        text: "Tomorrow -> Non-Uniform Day"
+                        text_font: font_card_sub
+                        text_color: 0x9CA3AF
+              # Right Column Bottom Mini-Card: Compact Weather Prep ("Need a Coat / Sun Cream?")
+              - obj:
+                  id: ev_wx_card
+                  x: 492
+                  y: 208
+                  width: 284
+                  height: 96
+                  radius: 14
+                  bg_color: 0x0D111C
+                  bg_opa: COVER
+                  border_width: 1
+                  border_color: 0x262C40
+                  pad_all: 0
+                  scrollbar_mode: "OFF"
+                  widgets:
+                    - label:
+                        id: ev_wx_kicker
+                        x: 16
+                        y: 12
+                        text: "WEATHER PREP"
+                        text_font: font_fira_xs
+                        text_color: 0x38BDF8
+                    - label:
+                        id: ev_wx_line1
+                        x: 16
+                        y: 36
+                        width: 252
+                        height: 20
+                        long_mode: DOT
+                        text: "Dry Now · Rain Later (75%)!"
+                        text_font: font_fira_sm
+                        text_color: 0xFFF6EA
+                    - label:
+                        id: ev_wx_line2
+                        x: 16
+                        y: 62
+                        width: 252
+                        height: 19
+                        long_mode: DOT
+                        text: "Pack Warm Raincoat & Umbrella"
+                        text_font: font_card_sub
+                        text_color: 0x93C5FD
